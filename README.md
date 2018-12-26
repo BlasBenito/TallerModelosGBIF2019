@@ -63,8 +63,6 @@ More info: https://www.gbif.es/talleres/xiv-taller-gbif-es-modelizacion-nichos-e
 
 ## Módulo IV: PRESENTACIÓN DE CASOS DEL TALLER, MODELOS DINÁMICOS Y CIERRE
 
-+ Presentación de los resultados (discusión de limitaciones de los modelos y nuevas direcciones de trabajo)
-
++ Presentación de los resultados (discusión de limitaciones de los modelos y nuevas direcciones de trabajo
 + Modelos de distribución dinámicos (teoría y ejemplo práctico)
-
 + Discusión final, evaluación y cierre del Taller
