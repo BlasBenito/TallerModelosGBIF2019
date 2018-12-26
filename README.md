@@ -7,31 +7,31 @@ More info: https://www.gbif.es/talleres/xiv-taller-gbif-es-modelizacion-nichos-e
 
 ## MÓDULO 0: Presentación
 
-    Bienvenida e introducción al curso - Cristina Villaverde (GBIF.ES)
-    GBIF y la información primaria sobre biodiversidad - Miguel Vega (GBIF.ES)
+ +  Bienvenida e introducción al curso - Cristina Villaverde (GBIF.ES)
+ +  GBIF y la información primaria sobre biodiversidad - Miguel Vega (GBIF.ES)
 
 ## MÓDULO I: INTRODUCCIÓN Y PREPARACIÓN DE VARIABLES Y PRESENCIAS - Blas Benito (University of Bergen)
 
 + Introducción a los Modelos de Nicho Ecológico
 
-    Concepto de Modelo
-    La Distribución Geográfica de las especies
-    El Nicho Ecológico
-    Modelos de Nicho Ecológico
+    +  Concepto de Modelo
+    +  La Distribución Geográfica de las especies
+    +  El Nicho Ecológico
+    +  Modelos de Nicho Ecológico
 
 + Proceso de modelado
 
-    Formulación teórica
-    Registros de presencia
-    Variables ambientales
-    Análisis de viabilidad de los datos
-    Algoritmos predictivos
-    Parámetros del modelo
-    Evaluación
-    Post-procesamiento y análisis
-    Interpretación de los resultados y aplicación
-    Aplicaciones
-    Limitaciones
+    +  Formulación teórica
+    +  Registros de presencia
+    +  Variables ambientales
+    +  Análisis de viabilidad de los datos
+    +  Algoritmos predictivos
+    +  Parámetros del modelo
+    +  Evaluación
+    +  Post-procesamiento y análisis
+    +  Interpretación de los resultados y aplicación
+    +  Aplicaciones
+    +  Limitaciones
 
 +  Preparación de registros de presencia: cómo hacer búsquedas y descargar datos de biodiversidad desde los portales de GBIF - Katia Cezón (GBIF.ES)
 
@@ -41,8 +41,8 @@ More info: https://www.gbif.es/talleres/xiv-taller-gbif-es-modelizacion-nichos-e
 
 +  Modelos de distribución con R y Dismo, teoría y práctica: GLM, GAM, Regression Trees, Random Forest, Boosted Regression Trees, MaxEnt
 
-    Fundamentos de los algoritmos predictivos incluidos en Dismo
-    Calibrado, evaluación y proyección de modelos Dismo
+    +  Fundamentos de los algoritmos predictivos incluidos en Dismo
+    +  Calibrado, evaluación y proyección de modelos Dismo
 
 +  Modelos de distribución con R y Dismo
 
@@ -50,9 +50,9 @@ More info: https://www.gbif.es/talleres/xiv-taller-gbif-es-modelizacion-nichos-e
 
 +  Taller de trabajo individual o en grupo
 
-    Explicación de la dinámica del taller
-    Presentación de los casos de trabajo y los datos necesarios
-    Formación de grupos y asignación de casos
+    +  Explicación de la dinámica del taller
+    +  Presentación de los casos de trabajo y los datos necesarios
+    +  Formación de grupos y asignación de casos
 
 ## Módulo IV: PRESENTACIÓN DE CASOS DEL TALLER, MODELOS DINÁMICOS Y CIERRE
 
