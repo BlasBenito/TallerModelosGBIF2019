@@ -3,6 +3,8 @@ Material for the niche modeling course I teach every year at GBIF Spain.
 
 More info: https://www.gbif.es/talleres/xiv-taller-gbif-es-modelizacion-nichos-ecologicos/
 
+![alt text](https://www.gbif.es/wp-content/uploads/2018/09/DSCF3233-454x257.jpg)
+
 # Programa
 
 ## MÓDULO 0: Presentación
