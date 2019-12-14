@@ -1,25 +1,21 @@
-####################################
-#DEFINIENDO EL DIRECTORIO DE TRABAJO
-####################################
-
-#ESTABLECE EL DIRECTORIO DE TRABAJO
-setwd("c:/taller1/intro_R/datos")
-setwd("/home/blas/Dropbox/DOCENCIA/CURSOS_MDE_GBIF/2015/sesiones/taller1/intro_R")
-
-
 #INSTALANDO PAQUETES
 ####################
-install.packages(c("car","plotmo","raster","corrgram", "dismo"), dep=TRUE)
+    # install.packages(c("car","plotmo","raster","corrplot", "dismo", "foreach", "doParallel", "ggplot2", "viridis", "cowplot", "tidyr", "rgdal"), dep=TRUE)
 #NOTA IMPORTANTE: LAS LIBRERÍAS SE INSTALAN UNA SOLA VEZ, DESPUÉS DE ESTO, YA ESTÁN EN NUESTRO ORDENADOR, Y SOLO QUEDA CARGARLAS CUANDO LAS NECESITEMOS. ALGUNAS TARDAN UN RATO EN INSTALARSE, PACIENCIA!
+
+#AJUSTA LA CARPETA DE TRABAJO A LA LOCALIZACIÓN DE ESTE SCRIPT
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
 #CARGANDO PAQUETES
 #LAS LIBRERÍAS SOLO SE CARGAN UNA VEZ POR SESIÓN
-library(car)
-library(plotmo)
+# library(car)
+# library(plotmo)
+# library(raster)
+# library(corrgram)
+# library(dismo)
+library(ggplot2)
 library(raster)
-library(corrgram)
-library(dismo)
-
+library(rgdal)
 
 ###############
 #BUSCANDO AYUDA
@@ -51,245 +47,244 @@ demo(persp)
 demo(graphics)
 
 
-
-###############
-#TIPOS DE DATOS
-###############
-#NUMERIC
-x<-10.5
-x
-is.numeric(x)
-is.character(x)
-#borramos el objeto "x", no lo vamos a necesitar más
-
-rm(x) #comprueba que ha desaparecido del espacio de trabajo
-
-
-#CHARACTER (SIEMPRE entre comillas)
-y<-"perro"
-y
-is.numeric(y)
-is.character(y)
-
-rm(y)
-
-
-#VALORES PERDIDOS O NO NUMÉRICOS
-#Ojo, algunas funciones no funcionarán con valores NA o NaN
-x<-c(1, 2, 3, 4, 5, 6, 7, NA) #NA -> Not Available
-is.na(x)
-mean(x)
-help(mean)
-mean(x, na.rm=T)
-
-rm(x)
-
-
-#REDONDEANDO NÚMEROS
-round(5.9, digits=0)
-
-#valor absoluto
-abs(-5.9)
-
-
-#####################
-#ESTRUCTURAS DE DATOS
-#####################
-
-#VECTOR
-#######
-z<-c(1, 2, 3, 4, 5, 6)
-z
-length(z)
-is.vector(z)
-z<-1:6
-z
-z<-seq(1, 6, 1)
-z
-
-#ALGUNAS FUNCIONES APLICABLES A VECTORES
-max(z)
-min(z)
-sum(z)
-mean(z)
-median(z)
-range(z)
-sort(z)
-
-rm(z)
-
-
-#DATA FRAME
-###########
-#cargamos una tabla de ejemplo que ya está en R
-data(cars)
-cars
-is.data.frame(cars)
-
-#para ver los datos, pincha sobre la entrada "cars" en la pestaña Environment de Rstudio
-
-#vemos la estructura interna del dataframe
-str(cars) 
-#fíjate en los elementos que empiezan con $, son columnas. En R, cada columna de un data.frame es un vector
-
-#ÍNDICES PARA ACCEDER A VALORES DE UN DATA FRAME
-#accedemos a las columnas por separado
-cars$speed
-cars$dist
-#otro modo de hacerlo
-cars[, "speed"]
-cars[, "dist"]
-
-#accedemos a la fila 10
-cars[10,]
-
-#accedemos a varias filas
-cars[5:15,]
-
-#accedemos a varias filas y una de las columnas
-cars[5:15, "speed"]
-
-#seleccionamos un subset con una condición sobre una variable
-#ojo a la coma después del paréntesis, el espacio vacío quiere decir "todas las columnas"
-cars2<-cars[cars$dist < 60, ]
-cars2
-
-rm(cars)
-rm(cars2)
-
-#CREAR UN DATA FRAME
-#definimos las columnas
-x<-c(10, 20, 40, 80)
-y<-c("s","s","n","n")
-
-#las unimos
-xy<-data.frame(x, y)
-
-#le ponemos nombre
-names(xy)<-c("valor","factor")
-
-#crear un dataframe en blanco (es útil ocasionalmente, lo dejo aquí como referencia)
-df.blanco<-dataframe(especie=as.character(), latitud=numeric(), longitud=numeric(), stringsAsFactors=FALSE)
-
-rm(x, y, xy, d1)
-
-
-#importa un dataframe del disco duro
-d1<-read.table("./datos/clima.csv", header=TRUE, sep=",")
-str(d1)
-
-rm(d1)
-
-
 ###############################
 #DATOS RASTER (MAPAS DIGITALES)
 ###############################
-#IMPORTA LOS MAPAS
+
+
+#IMPORTANDO MAPAS
+#################
 #lista de variables
-lista.variables <- list.files(path="./datos/mapas", pattern='bio', full.names=TRUE)
-lista.variables
+clima.lista <-  list.files(path="./datos/mapas", pattern='bio', full.names=TRUE)
+clima.lista
 #stack de variables (el stack lee las variables desde el disco duro, no las carga en el espacio de trabajo)
-variables.clima.stack <- stack(lista.variables)
-
-#dibujamos los mapas
-plot(variables.clima.stack)
-
-#vemos los nombres de las variables
-names(variables.clima.stack)
-
-#dibujamos un mapa concreto
-plot(variables.clima.stack, "bio5")
-plot(variables.clima.stack[["bio5"]])
+clima.stack <-  raster::stack(clima.lista)
 
 #brick de variables (el brick tiene las variables en la memoria RAM del ordenador, es más rápido, pero lo usaremos solo si tenemos RAM suficiente)
-variables.clima.brick <- brick(variables.clima.stack)
+clima.brick <-  raster::brick(clima.stack)
 #fíjate que ahora, en la pestaña Environment, variables.brick aparece con su tamaño (3.5MB)
 
-#se plotea igual que un stack
-plot(variables.clima.brick)
 
-#vemos las características
-variables.clima.brick
+#PLOTEANDO MAPAS
+#################
+#dibujamos los mapas
+raster::plot(clima.brick, col = viridis::viridis(30))
 
-#vemos lo que hay dentro
-slotNames(variables.clima.brick)
+#vemos los nombres de las variables
+names(clima.brick)
 
-#vemos lo que hay en el slot extent
-slot(variables.clima.brick, "extent")
+#dibujamos un mapa concreto
+raster::plot(clima.brick, "bio5", col = viridis::viridis(30))
+raster::plot(clima.brick[["bio5"]], col = viridis::viridis(30))
 
-#otra forma de acceder al slot
-variables.clima.brick@extent
-#otra forma de verla
-extension<-extent(variables.clima.brick)
-extension
 
-#fíjate que coord. ref. viene como NA, le ponemos el que le corresponde
+#VIENDO CARACTERÍSTICAS DE LOS MAPAS
+#####################################
+#RESUMEN DEL OBJETO
+clima.brick
+
+#RESOLUCIÓN
+raster::xres(clima.brick)
+raster::yres(clima.brick)
+#¿cuanto es eso en km?
+raster::xres(clima.brick)*111.19
+
+#EXTENSION
+raster::extent(clima.brick)
+
+
+#CAMBIANDO CARACTERÍSTICAS DE LOS MAPAS
+######################################
+
+#CAMBIANDO RESOLUCION
+clima.brick.coarse <- raster::aggregate(
+  x = clima.brick, 
+  fact = 10, 
+  fun = mean
+  )
+
+raster::res(clima.brick.coarse)
+raster::plot(clima.brick.coarse, col = viridis::viridis(30))
+
+
+#CAMBIANDO LA PROYECCIÓN
+#fíjate que en "crs" la definición del sistema de coordenadas, viene como NA, le ponemos el que le corresponde
 #NOTA: los sistemas de referencia se escriben en formato Proj4.
 #Puedes consultar el Proj4 de cada sistema de referencia aquí: http://www.spatialreference.org/
-sistema.referencia<-CRS("+proj=longlat +ellps=WGS84 +datum=WGS84")
-projection(variables.clima.brick)<-sistema.referencia
-variables.clima.brick
+raster::projection(clima.brick.coarse) <- sp::CRS("+init=epsg:4326")
+clima.brick.coarse
 
-#vemos la resolución espacial
-xres(variables.clima.brick)
-yres(variables.clima.brick)
-#¿cuanto es eso en km?
-xres(variables.clima.brick)*111.19
+#a UTM (zona 30N)
+clima.brick.coarse.utm <- raster::projectRaster(
+  from = clima.brick.coarse, 
+  crs = crs("+init=epsg:25830")
+  )
 
-#operaciones con raster: rango de temperatura
-rangot<-variables.clima.brick[["bio5"]] - variables.clima.brick[["bio6"]]
-names(rangot)<-"rangot"
+raster::plot(clima.brick.coarse.utm)
+
+
+#OPERACIONES VARIADAS CON MAPAS RASTER
+#########################################
+
+#álgebra de mapas
+rangot <-  clima.brick[["bio5"]] - clima.brick[["bio6"]]
+names(rangot) <-  "rangot"
+raster::plot(rangot)
+
+#álgebra de mapas con calc
+mediat <- raster::calc(
+  x = clima.brick[[c("bio5", "bio6")]], 
+  fun = mean
+  )
+raster::plot(mediat)
 
 #añadimos la nueva variable al brick
-variables.clima.brick<-addLayer(rangot, variables.clima.brick)
-plot(variables.clima.brick)
+clima.brick <-  raster::addLayer(x = rangot, clima.brick)
 
-#convertimos una variable en un mapa binario a partir de un determinado valor
-plot(variables.clima.brick[["rangot"]] > 250)
+#recortando un área concreta
+#la extensión nueva va en orden: xmin, xmax, ymin, ymax
+extension.nueva <- c(-10, 5, 35, 45)
+clima.peninsula <- raster::crop(
+  x = clima.brick, 
+  y = extension.nueva
+  )
+raster::plot(clima.peninsula)
 
 #transformar los mapas en un data frame
-variables.df<-as.data.frame(variables.clima.brick)
+variables.df <- raster::as.data.frame(
+  x = clima.brick, 
+  xy = TRUE
+  )
 str(variables.df)
 #muchos valores nulos, los quitamos
-variables.df<-na.omit(variables.df)
+variables.df <- na.omit(variables.df)
 str(variables.df)
-#NO BORRAMOS variables.df, VAMOS A USARLO LUEGO
 
-#sacamos un raster del brick
-bio5<-variables.clima.brick[["bio5"]]
-plot(bio5)
-
-#le cambiamos la resolución
-bio5.lowres<-aggregate(bio5, fact=5, fun=mean)
-plot(bio5.lowres)
-
-#lo recortamos
-#la extensión nueva va en orden: xmin, xmax, ymin, ymax
-extension.nueva<-c(-10, 5, 35, 45)
-bio5.lowres.peninsula<-crop(bio5.lowres, extension.nueva)
-plot(bio5.lowres.peninsula)
-
-#lo proyectamos a ETRS89 / UTM zone 30N a una resolución de 50KM
-bio5.lowres.peninsula.utm<-projectRaster(bio5.lowres.peninsula, crs="+proj=utm +zone=30 +ellps=GRS80 +units=m +no_defs ", res=c(50000, 50000))
-
-#vemos la resolución
-yres(bio5.lowres.peninsula.utm)
-xres(bio5.lowres.peninsula.utm)
-
-#ploteamos los dos
-par(mfrow=c(1,2))
-plot(bio5.lowres.peninsula)
-plot(bio5.lowres.peninsula.utm)
 
 #guarda el raster para verlo en un GIS
-writeRaster(bio5.lowres.peninsula.utm, filename="bio5_peninsula_utm.asc", format="ascii", overwrite=TRUE)
+writeRaster(
+  clima.peninsula[[1]], 
+  filename="mapa.asc", 
+  format="ascii",
+  overwrite=TRUE
+  )
 
-#BORRAMOS OBJETOS QUE NO NECESITAMOS
-rm(bio5, bio5.lowres, bio5.lowres.peninsula.utm, list.variables, extension, rangot, bio5.lowres.peninsula, extension.nueva, sistema.referencia, variables.clima.stack)
+
+#IGUALANDO LA EXTENSIÓN Y RESOLUCIÓN DE MAPAS RASTER
+###################################################
+elev <- raster("datos/igualar_variables/elevacion.asc")
+hfp <- raster("datos/igualar_variables/hfp.asc")
+ndvi <- raster("datos/igualar_variables/ndvi.asc")
+
+#plot
+x11()
+par(mfrow=c(1,3))
+raster::plot(elev)
+raster::plot(hfp)
+raster::plot(ndvi)
+
+#comprobamos extensión
+extent(elev)
+extent(hfp)
+extent(ndvi)
+
+#comprobamos resolucion
+xres(elev)
+xres(hfp)
+xres(ndvi)
+
+#1 - IGUALAMOS EXTENSIÓN Y RESOLUCIÓN
+#primero con elev
+elev2 <- resample(
+  x=elev, 
+  y=ndvi, 
+  method="bilinear" #equivalente a promedio
+  )
+
+#comparamos extensión
+extent(ndvi)
+extent(elev2)
+
+#comparamos resolución
+xres(ndvi)
+xres(elev2)
+
+#plot
+x11()
+par(mfrow=c(1,2))
+raster::plot(elev)
+raster::plot(elev2)
+
+#lo hacemos con el siguiente mapa, ya no hacen falta las comprobaciones
+hfp2 <- resample(
+  x=hfp, 
+  y=ndvi, 
+  method="bilinear"
+  )
+
+#comprobamos que ha ido bien
+x11()
+par(mfrow=c(1, 3))
+raster::plot(ndvi)
+raster::plot(elev2)
+raster::plot(hfp2)
+
+#2 - PREPARAMOS UN MAPA DE CELDAS NULAS (MÁSCARA) COMUNES A TODOS LOS MAPAS (USAMOS MULTIPLICACIÓN PARA PROPAGAR)
+valores.nulos <- ndvi * elev2 * hfp2 
+#la multiplicación de todos los mapas propaga los valores nulos
+x11()
+raster::plot(valores.nulos)
 
 
+#3 - APLICAMOS EL MAPA DE CELDAS NULAS A TODOS LOS MAPAS
+#ponemos todos los mapas juntos en un brick
+variables.brick <- brick(
+  ndvi, 
+  elev2, 
+  hfp2
+  )
+names(variables.brick)<-c("ndvi", "elev", "hfp")
 
+#aplicamos la máscara de valores nulos a variables.brick
+variables.brick <- mask(
+  x = variables.brick, 
+  mask = valores.nulos
+  )
+x11()
+raster::plot(variables.brick) #so far so good
 
+#4 - RECORTE FINAL
+#finalmente recortamos el brick con la extensión del mapa con menor extensión, porque nuestro mapa de referencia era el de mayor extensión, pero las áreas sobrantes han quedado ocultas por las celdas nulas
+extent(elev)
+extent(hfp) #parece que tiene una extensión menor
+variables.brick <- crop(
+  x = variables.brick, 
+  y = extent(hfp)
+  )
+raster::plot(variables.brick)
+
+#5 - EXPORTAMOS LOS MAPAS
+#guardamos las variables preparadas al disco duro
+raster::writeRaster(
+  variables.brick[["elev"]], 
+  filename="./igualar_variables/elev_final.asc", 
+  format="ascii", 
+  overwrite=TRUE
+  )
+
+raster::writeRaster(
+  variables.brick[["hfp"]], 
+  filename="./igualar_variables/hfp_final.asc", 
+  format="ascii", 
+  overwrite=TRUE
+  )
+
+raster::writeRaster(
+  variables.brick[["ndvi"]], 
+  filename="./igualar_variables/ndvi_final.asc", 
+  format="ascii", 
+  overwrite=TRUE
+  )
 
 
 #######################
@@ -301,32 +296,41 @@ rm(bio5, bio5.lowres, bio5.lowres.peninsula.utm, list.variables, extension, rang
 
 #BUCLE FOR SOBRE SECUENCIA NUMÉRICA
 for (year in 1980:2000){
-  print(year)
+ print(year)
 }
 
 rm(year)
 
+#vectorizado
+sapply(X = 1980:2000, FUN = function(x) print(x))
+
+
 #BUCLE FOR SOBRE VECTOR DE CARACTERES
-generos<-c("Abies","Fagus","Pinus","Quercus")
+generos <- c("Abies","Fagus","Pinus","Quercus")
 for (genero in generos){
-  print(genero)
+ print(genero)
 }
+
+#vectorizado
+sapply(X = generos, FUN = function(x) print(x))
 
 rm(genero)
 
+
 #BUCLE PARA DIBUJAR LOS MAPAS DE VARIABLES EN UN PDF MULTIPÁGINA
 pdf("variables.pdf", width=20, height=15, pointsize=20)
-for (variable in 1:length(names(variables.brick))){
-  plot(variables.brick, variable)
+for (variable in 1:length(names(clima.brick))){
+ plot(clima.brick, variable)
 }
 dev.off()
 
 rm(variable)
 
+
 #¿COMO DETENEMOS LA EJECUCIÓN DE UN BUCLE?
 for (genero in generos){
-  print(genero)
-  if(genero=="Pinus"){break} #condición para parar el bucle
+ print(genero)
+ if(genero=="Pinus"){break} #condición para parar el bucle
 }
 
 rm(genero)
@@ -336,74 +340,96 @@ rm(genero)
 ########################
 
 #LA TABLA CON LA QUE VAMOS A HACER LOS ANÁLISIS ES MUY GRANDE, LA REMUESTREAMOS
-n.filas<-nrow(variables.df)
+n.filas <- nrow(variables.df)
 n.filas
 
 #MUESTREAMOS 1000 filas
-muestra.1000<-sample(n.filas, 1000) #devuelve índices de casos seleccionados al azar
-variables.df.small<-variables.df[muestra.1000, ]
+variables.df.small <- variables.df[sample(n.filas, 1000), ]
 nrow(variables.df.small)
 
 #GUARDAMOS LA NUEVA TABLA
 write.table(variables.df.small, "Tabla.csv", sep=",", row.names=FALSE, col.names=TRUE, quote=FALSE)
 
 #CORRELOGRAMA
-corrgram(variables.df.small, order=TRUE, lower.panel=panel.ellipse, upper.panel=panel.pts, text.panel=panel.txt)
-
-#ANÁLISIS DE CORRELACIÓN
-variables.cor<-cor(variables.df.small)
-variables.cor
+corrplot::corrplot(
+  cor(variables.df.small)
+  )
 
 
 #CÁLCULO DE UN MODELO LINEAL
 #¿SE PUEDE PREDECIR LA TEMPERATURA MEDIA MÁXIMA EN FUNCIÓN DE LA TEMPERATURA MEDIA MÍNIMA Y LA PRECIPITACIÓN?
 #ajustamos el modelo
-modelo<-lm(bio5 ~ bio6 + bio12, data=variables.df.small)
+modelo <- lm(
+  formula = bio5 ~ bio6 + bio12, 
+  data = variables.df.small
+  )
 #resumen del modelo
 summary(modelo)
+
 #curvas de respuseta
-plotmo(modelo, level=0.68, all2=TRUE)
-#predicción sobre las variables (requiere tener cargado 'raster')
-help(predict) #hay tres versiones distintas
-#para usar una concreta, usamos la sintaxis nombre_libreria::nombre_funcion
-prediccion<-raster::predict(object=variables.clima.brick, model=modelo, progress="text")
-plot(prediccion)
+plotmo::plotmo(
+  modelo, 
+  level = 0.68, 
+  all2 = TRUE
+  )
+
+#predicción
+prediccion <- raster::predict(
+  object = clima.peninsula, 
+  model = modelo
+  )
+raster::plot(prediccion)
+
+#comparamos predicción con realidad
+cor(
+  na.omit(as.vector(prediccion)), 
+  na.omit(as.vector(clima.peninsula[["bio5"]]))
+  )
+
 
 ##################
 #CREANDO FUNCIONES
 ##################
-#creamos una serie de 1000 números que siguen una distribución normal, con una media al azar entre 50 y 100, y una desviación al azar entre 1 y 10, es decir, media y desviación desconocidas
-x<-rnorm(n=1000, mean=20, sd=5)
+#imagina que tenemos dos vectores de números representando probabilidad de presencia y probabilidad de ausencia
+prob.pres <- rnorm(n=100, mean=0.7, sd=0.1)
+prob.aus <- rnorm(n=100, mean=0.3, sd=0.1)
 
-#dibujamos el histograma
-hist(x)
+#nuestro objetivo es hacer un plot como este para cualquier par arbitrario de vectores numéricos
+plot(
+  density(prob.pres), 
+  xlim = c(0, 1), 
+  col = "blue4", 
+  lwd = 1.5, 
+  xlab = "Probability"
+  )
+lines(
+  density(prob.aus), 
+  col = "red4", 
+  lwd = 1.5
+  )
 
-#el gráfico de densidad
-plot(density(x))
-
-#vamos a sumar los valores de la serie con un bucle
-suma<-sum(x)
-suma
-
-#vamos a calcular el número de casos (aunque ya lo sabemos!)
-n<-length(x)
-n
-
-#calculamos la media
-media<-suma/n
-media
-
-#¿TENGO QUE ESCRIBIR TODO ESTE CÓDIGO CADA VEZ QUE QUIERO CALCULAR UNA MEDIA?
-#NO, PARA ESO PODEMOS ESCRIBIR UNA FUNCIÓN
-media.aritmetica<-function(x){
-  sum(x)/length(x)
+#el esqueleto de una función siempre es
+plot.dist <- function(x, y){
+  plot(
+    density(x), 
+    xlim = c(0, 1), 
+    col = "blue4", 
+    lwd = 1.5, 
+    xlab = "Probability"
+  )
+  lines(
+    density(y), 
+    col = "red4", 
+    lwd = 1.5
+  )
 }
 
-#ahora aplicamos la función a la serie de números
-media.aritmetica(x)
+#usándola
+plot.dist(
+  x = rnorm(n=100, mean=0.7, sd=0.1),
+  y = rnorm(n=100, mean=0.3, sd=0.1)
+  )
 
-#NOTA: esta función ya existe en R:
-mean(x)
 
 ##################################
 #CONTROLANDO EL ESPACIO DE TRABAJO

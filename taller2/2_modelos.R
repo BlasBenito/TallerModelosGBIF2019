@@ -1,100 +1,44 @@
-###################################
-#ESTABLECE EL DIRECTORIO DE TRABAJO
-###################################
-#DIRECTORIO DE TRABAJO
-setwd("C:/taller2")
-setwd("/home/blas/Dropbox/DOCENCIA/CURSOS_MDE_GBIF/2015/sesiones/taller2")
+#ELIMINA NOTACIÓN CIENTÍFICA
+options(scipen = 999)
 
-#################################################################
-#PARA GUARDAR O CARGAR EL ESPACIO DE TRABAJO CUANDO SEA NECESARIO
-#################################################################
+#AJUSTA LA CARPETA DE TRABAJO A LA LOCALIZACIÓN DE ESTE SCRIPT
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
-#CARGA LAS PRESENCIAS Y LAS VARIABLES
-#load("./resultados/2_modelos.Rdata")
-#save("./resultados/2_modelos.Rdata")
-
-
-################################
-#INSTALACION Y CARGA DE PAQUETES
-################################
-#NOTA: SOLO ES NECESARIO INSTALARLOS UNA VEZ. DESACTIVA ESTAS LÍNEAS PARA LA PRÓXIMA SESIÓN
-#INSTALA PAQUETE DISMO Y TODAS SUS DEPENDENCIAS (EJECUTAR UNA SOLA VEZ)
-
-install.packages("tree", dep=TRUE)
-install.packages("
-", dep=TRUE)
-install.packages("party", dep=TRUE)
-install.packages("mgcv", dep=TRUE)
-
-
-#CARGA LAS LIBRERIAS NECESARIAS (EJECUTAR SIEMPRE QUE TRABAJES CON EL SCRIPT)
-library(dismo) #LIBRERIA PARA MODELOS DE DISTRIBUCION
-library(plotmo) #LIBRERIA PARA VISUALIZACION DE CURVAS DE RESPUESTA
-library(mgcv) #OTRA LIBRERIA PARA GAM
-library(randomForest) #RANDOM FOREST
+#CARGA LIBRERÍAS
+library(dismo)
+library(ggplot2)
+library(cowplot)
+theme_set(theme_cowplot())
+library(plotmo)
+library(purrr)
 
 #CARGA FUNCIONES
-source("funcionesSDM_taller2.R")
+source("funciones.R")
 
-#CARGA LAS PRESENCIAS Y LAS VARIABLES
-unzip("./data/variables_y_presencia.zip", exdir="./data/")
-load("./data/variables_y_presencia/variables_y_presencia.Rdata")
+#CARGANDO LOS DATOS DE LA ESPECIE VIRTUAL Y LAS VARIABLES
+load("data/presencia_y_variables.RData")
 
-#CREA CARPETA PARA GUARDAR LOS MODELOS
-dir.create("./resultados")
-dir.create("./resultados/modelos")
-dir.create("./resultados/proyecciones")
 
-#CREAMOS CARPETAS PARA TRABAJAR LUEGO CON MAXENT
-dir.create("./resultados/maxent")
-dir.create("./resultados/maxent/ejecucion1")
-dir.create("./resultados/maxent/ejecucion2")
-dir.create("./resultados/maxent/ejecucion3")
-dir.create("./resultados/maxent/ejecucion4")
-dir.create("./resultados/maxent/evaluacion1")
-dir.create("./resultados/maxent/evaluacion2")
-dir.create("./resultados/maxent/evaluacion3")
-dir.create("./resultados/maxent/evaluacion4")
-dir.create("./resultados/maxent/threshold1")
-dir.create("./resultados/maxent/proyeccion_espacio")
-dir.create("./resultados/maxent/proyeccion_tiempo")
+#PREPARANDO DATOS DE ENTRENAMIENTO
+#########################################################
+#########################################################
+#presencia y background
+pb <- rbind(
+  sp$presencia, 
+  sp$background
+)[, c("presencia", "x", "y", sp$variables.seleccionadas)]
 
-################################################
-#EXPLORANDO LOS DATOS PARA UNA VARIABLE AMBIENTAL
-################################################
+#Nota: para calibrar GLMs con background necesitamos ponderar las presencias y los puntos de background en función de su número.
+#Como hay muchos más puntos de background (ceros) que de presencias, el modelo dará mucha más importancia al background. Añadir pesos (weights) al modelo soluciona este problema.
+pb.w <- weightCases(presence = pb$presencia)
 
-#guardamos todo en un solo pdf
-pdf("./resultados/analisis_exploratorio1.pdf", width=15, height=6, pointsize=30)
-#itera por las variables
-for (variable in names(variables)){
+#presencia y pseudoausencias
+pp <- rbind(
+  sp$presencia, 
+  sp$pseudoausencia
+)[, c("presencia", "x", "y", sp$variables.seleccionadas)]
 
-par(mfrow=c(1,3))
 
-#límites de la variable en los gráficos
-variable.min<-min(presencia.background[, variable])
-variable.max<-max(presencia.background[, variable])
-
-#density plot
-#------------
-#presencias vs. background
-d0<-density(presencia.background[presencia.background$presencia==0, variable], from=variable.min, to=variable.max)
-d1<-density(presencia.background[presencia.background$presencia==1, variable], from=variable.min, to=variable.max)
-plot(d0, col="red", xlim=c(variable.min,variable.max), lwd=3, main=paste(variable, " vs. background", sep=""), xlab=variable, ylim=c(0, max(d0$y, d1$y)))
-lines(d1, col="forestgreen", lwd=3)
-
-#presencias vs ausencias
-d0<-density(presencia.ausencia[presencia.ausencia$presencia==0, variable], from=variable.min, to=variable.max)
-d1<-density(presencia.ausencia[presencia.ausencia$presencia==1, variable], from=variable.min, to=variable.max)
-plot(d0, col="red", xlim=c(variable.min,variable.max), lwd=3, main=paste(variable, " vs. ausencias", sep=""), xlab=variable, ylim=c(0, max(d0$y, d1$y)))
-lines(d1, col="forestgreen", lwd=3)
-
-#presencias vs pseudoausencias
-d0<-density(presencia.pseudoausencia[presencia.pseudoausencia$presencia==0, variable], from=variable.min, to=variable.max)
-d1<-density(presencia.pseudoausencia[presencia.pseudoausencia$presencia==1, variable], from=variable.min, to=variable.max)
-plot(d0, col="red", xlim=c(variable.min,variable.max), lwd=3, main=paste(variable, " vs. pseudoausencias", sep=""), xlab=variable, ylim=c(0, max(d0$y, d1$y)))
-lines(d1, col="forestgreen", lwd=3)
-}
-dev.off()
 
 
 #################################################################
@@ -103,355 +47,1503 @@ dev.off()
 #################################################################
 #################################################################
 
+#brick y lista para guardar modelos
+modelos.brick <- brick()
+modelos.list <- list()
+modelos.formulas <- list()
+
+
+
+#NUESTRO PRIMER MODELO DE LA A A LA Z
+#####################################
+#####################################
+
+#VER SECCIÓN DE BIOCLIM EN LAS DIAPOSITIVAS
+
+
+#1.- CALIBRANDO EL MODELO
+#####################################
+#calibramos un modelo BIOCLIM que solo requiere presencias
 #NOTA IMPORTANTE, VAMOS A CALIBRAR TODOS LOS MODELOS CON LAS TABLAS presencia.*.entrenamiento, PORQUE LOS EVALUAREMOS TODOS JUNTOS AL FINAL PARA COMPARARLOS
+temp.bioclim <- dismo::bioclim(
+  x = variables$brick, 
+  p = sp$xy #solo coordenadas de presencia
+  )
+
+#vemos el objeto por dentro
+str(temp.bioclim)
+
+
+#2.- EXAMINANDO EL MODELO
+#####################################
+#para plotear el modelo, a y b son los índices de las variables en names(variables).
+#en VERDE las presencias dentro del hipercubo según el modelo.
+#en ROJO las presencias fuera del hipercubo según el modelo.
+#en AZUL el nicho óptimo según las variables a y b del plot.
+#aunque las presencias en rojo estén dentro del nicho óptimo para unos determinados a y b, estarán fuera para otros.
+x11(width = 15, height = 10)
+par(mfrow=c(2,2), mar=c(4,4,3,3))
+plot(temp.bioclim, a=1, b=2)
+plot(temp.bioclim, a=1, b=3)
+plot(temp.bioclim, a=1, b=4)
+plot(temp.bioclim, a=1, b=5)
+
+
+#3.- PROYECTANDO EL MODELO A UN MAPA
+#####################################
+temp.bioclim.map <- raster::predict(
+  object = variables$brick, 
+  model = temp.bioclim
+  )
+
+#le ponemos nombre al mapa
+names(temp.bioclim.map) <- "bioclim"
+
+#ploteamos el mapa
+dev.off()
+x11(width = 15, height = 10)
+plot(
+  temp.bioclim.map, 
+  col = viridis::viridis(
+    100, 
+    direction = -1
+    )
+)
+
+
+#CERRANDO SECCIÓN
+#-----------------------------------
+
+#guardando modelos
+names(temp.bioclim.map) <- "bioclim"
+modelos.brick$bioclim <- temp.bioclim.map
+modelos.list[["bioclim"]] <- temp.bioclim
+
+#cierra ventanas gráficas
+graphics.off() 
+rm(temp.bioclim, temp.bioclim.map)
  
+
+
+
+################################
 ################################
 #GENERALIZED LINEAR MODELS (GLM)
 ################################
+################################
+
 #AYUDA GLM
 help(glm)
 
-#EMPEZAMOS POCO A POCO, SOLO CON DOS VARIABLES
-#-----------------------
-m.glm.temp<-glm(presencia ~ bio5 + ndvi_range, family=binomial(link=logit), data=presencia.pseudoausencia.entrenamiento)
 
-#vemos el resumen del resultado
-summary(m.glm.temp)
+#EMPEZAMOS POCO A POCO, SOLO CON UNA VARIABLE
+#############################################
+#############################################
 
-#devianza explicada
-Dsquared(m.glm.temp)
+#AJUSTE DEL MODELO
+#---------------------------------------------------
+#ndvi_minimum: rango anual de temperatura
+temp.glm <- glm(
+  presencia ~ ndvi_minimum,
+  family = quasibinomial(link = logit), # -> PORQUE ESTAMOS HACIENDO REGRESIÓN LOGÍSTICA!
+  data = pb, 
+  weights = pb.w
+  )
 
-#curva de respuesta
-plotmo(m.glm.temp, level=0.68, all2=TRUE)
+#RESUMEN DE RESULTADOS
+summary(temp.glm)
+#NOTA: los coeficientes no se pueden interpretar como medidas relativas de influencia si las variables no están en la misma escala.
 
-#predecimos a un mapa
-m.glm.temp.mapa<-predict(variables, m.glm.temp, type="response")
-
-#plot
-plot(m.glm.temp.mapa)
-points(presencia[, c("x","y")], cex=0.1)
-
-
-#AHORA CON DOS VARIABLES QUE INTERACCIONAN
-#-----------------------------------------
-m.glm.temp<-glm(presencia ~ bio5 * ndvi_range, family=binomial(link=logit), data=presencia.pseudoausencia.entrenamiento)
-
-#vemos el resumen del resultado
-summary(m.glm.temp)
-
-#devianza explicada
-Dsquared(m.glm.temp)
-
-#curva de respuesta
-plotmo(m.glm.temp, level=0.68, all2=TRUE)
-
-#predecimos a un mapa
-m.glm.temp.mapa<-predict(variables, m.glm.temp, type="response")
-
-#plot
-plot(m.glm.temp.mapa)
-points(presencia[, c("x","y")], cex=0.1)
+#coeficientes estandarizados
+lm.beta::lm.beta(temp.glm)
 
 
-#AHORA CON DOS VARIABLES CON TRANSFORMACIÓN POLINOMIAL QUE INTERACCIONAN (grado 2)
-#----------------------------------------------------
-m.glm.temp<-glm(presencia ~ poly(bio5, 2) * poly(ndvi_range, 2), family=binomial(link=logit), data=presencia.pseudoausencia.entrenamiento)
+#CURVAS DE RESPUESTA
+#---------------------------------------------------
+#con plotmo
+x11(width = 15, height = 10)
+plotmo::plotmo(
+  temp.glm, 
+  level = 0.68
+  )
 
-#vemos el resumen del resultado
-summary(m.glm.temp)
-
-#devianza explicada
-Dsquared(m.glm.temp)
-
-#curva de respuesta
-plotmo(m.glm.temp, level=0.68, all2=TRUE)
-
-#predecimos a un mapa
-m.glm.temp.mapa<-predict(variables, m.glm.temp, type="response")
-
-#plot
-plot(m.glm.temp.mapa)
-points(presencia[, c("x","y")], cex=0.1)
+#vemos curva de respuesta sobre densidad
+x11(width = 15, height = 10)
+plotRespuesta(
+  modelo = temp.glm, 
+  presencias = pb, 
+  variable = "ndvi_minimum"
+  )
+#algo no va del todo bien, el modelo predice máxima probabilidad donde no hay valores para las variables.
+#esa curva necesita ser algo más flexible
 
 
-#AHORA CON DOS VARIABLES CON TRANSFORMACIÓN POLINOMIAL (grado 4)
-#----------------------------------------------------
-m.glm.temp<-glm(presencia ~ poly(bio5, 4) * poly(ndvi_range, 4), family=binomial(link=logit), data=presencia.pseudoausencia.entrenamiento)
+#AJUSTAMOS MODELO DE NUEVO
+#---------------------------------------------------
+#convertimos la variable en un polinomio de grado 2
+temp.glm <- glm(
+  presencia ~ poly(ndvi_minimum, 2, raw = TRUE),
+  family = quasibinomial(link = logit), 
+  data = pb, 
+  weights = pb.w
+)
 
-#vemos el resumen del resultado
-summary(m.glm.temp)
+#volvemos a dibujar
+x11(width = 15, height = 10)
+plotRespuesta(
+  modelo = temp.glm, 
+  presencias = pb, 
+  variable = "ndvi_minimum"
+)
 
-#devianza explicada
-Dsquared(m.glm.temp)
+#devianza
+Dsquared(temp.glm)
 
-#curva de respuesta
-plotmo(m.glm.temp, level=0.68)
+#está un poco mejor, pero vamos a darle más flexiblidad
 
-#predecimos a un mapa
-m.glm.temp.mapa<-predict(variables, m.glm.temp, type="response")
 
-#plot
-plot(m.glm.temp.mapa)
-points(presencia[, c("x","y")], cex=0.1)
+#AJUSTAMOS MODELO DE NUEVO
+#---------------------------------------------------
+#convertimos la variable en un polinomio de grado 3
+temp.glm <- glm(
+  presencia ~ poly(ndvi_minimum, 3, raw = TRUE),
+  family = quasibinomial(link = logit), 
+  data = pb, 
+  weights = pb.w
+)
 
+#volvemos a dibujar
+x11(width = 15, height = 10)
+plotRespuesta(
+  modelo = temp.glm, 
+  presencias = pb, 
+  variable = "ndvi_minimum"
+)
+
+#devianza
+Dsquared(temp.glm)
+#casi!
+
+
+#AJUSTAMOS MODELO DE NUEVO
+#---------------------------------------------------
+#convertimos la variable en un polinomio de grado 4
+temp.glm <- glm(
+  presencia ~ poly(ndvi_minimum, 4, raw = TRUE),
+  family = quasibinomial(link = logit), 
+  data = pb, 
+  weights = pb.w
+)
+
+#volvemos a dibujar
+x11(width = 15, height = 10)
+plotRespuesta(
+  modelo = temp.glm, 
+  presencias = pb, 
+  variable = "ndvi_minimum"
+)
+
+#devianza
+Dsquared(temp.glm) #fíjate que ahora Dsquared es un poco más
+
+
+
+
+#INTERACCIÓN ENTRE VARIABLES
+################################
+################################
+
+#AJUSTAMOS MODELO
+#---------------------------------------------------
+#ajustamos modelo
+temp.glm <- glm(
+  presencia ~ ndvi_minimum * bio15,
+  family = quasibinomial(link = logit), 
+  data = pb, 
+  weights = pb.w
+)
+
+#resultado
+summary(temp.glm)
+
+#coeficientes estandarizados
+lm.beta::lm.beta(temp.glm)
+
+#D cuadrado
+Dsquared(temp.glm)
+
+
+#CURVAS DE RESPUESTA
+#---------------------------------------------------
+#con plotmo
+x11(width = 15, height = 10)
+plotmo::plotmo(
+  temp.glm, 
+  level = 0.68, 
+  all2 = TRUE
+)
+
+#interacción
+x11(width = 15, height = 10)
+p1 <- plotInteraction(
+  model = temp.glm, 
+  data = pb, 
+  x = "ndvi_minimum", 
+  y = "bio15", 
+  z = "presencia", 
+  grid = 100, 
+  point.size.range = c(0.5, 6), 
+  print = TRUE
+)
+
+
+#AHORA CON DOS VARIABLES POLINOMIALES (GRADO 2) QUE INTERACCIONAN
+################################################################
+################################################################
+
+#AJUSTAMOS MODELO
+#---------------------------------------------------
+temp.glm <- glm(
+  presencia ~ poly(ndvi_minimum, 2, raw = TRUE) * poly(bio15, 2, raw = TRUE),
+  family = quasibinomial(link = logit), 
+  data = pb, 
+  weights = pb.w
+)
+
+#resultado (NOTA: AHORA CONTIENE MÁS TÉRMINOS! POR QUÉ?)
+summary(temp.glm)
+
+#coeficientes estandarizados
+lm.beta::lm.beta(temp.glm)
+
+#D cuadrado
+Dsquared(temp.glm)
+
+
+#CURVAS DE RESPUESTA
+#---------------------------------------------------
+#con plotmo
+x11(width = 15, height = 10)
+plotmo::plotmo(
+  temp.glm, 
+  level = 0.68, 
+  all2 = TRUE
+)
+
+#interacción
+x11(width = 15, height = 10)
+p1 <- plotInteraction(
+  model = temp.glm, 
+  data = pb, 
+  x = "ndvi_minimum", 
+  y = "bio15", 
+  z = "presencia", 
+  grid = 100, 
+  point.size.range = c(0.5, 6), 
+  print = TRUE
+)
+
+
+
+#AHORA CON DOS VARIABLES POLINOMIALES (GRADO 4!!!) QUE INTERACCIONAN
+################################################################
+################################################################
+
+
+#AJUSTE DEL MODELO
+#---------------------------------------------------
+temp.glm <- glm(
+  presencia ~ poly(ndvi_minimum, 4, raw = TRUE) * poly(bio15, 4, raw = TRUE),
+  family = quasibinomial(link = logit), 
+  data = pb, 
+  weights = pb.w
+)
+
+#resultado (NOTA: AHORA CONTIENE MÁS TÉRMINOS! POR QUÉ?)
+summary(temp.glm)
+
+#coeficientes estandarizados
+lm.beta::lm.beta(temp.glm)
+
+#D cuadrado
+Dsquared(temp.glm)
+
+
+#CURVAS DE RESPUESTA
+#---------------------------------------------------
+#curvas de respuesta
+x11(width = 15, height = 10)
+plotmo::plotmo(
+  temp.glm, 
+  level = 0.68, 
+  all2 = TRUE
+)
+
+#otra forma de verlas
+x11(width = 15, height = 10)
+p1 <- plotInteraction(
+  model = temp.glm, 
+  data = pb, 
+  x = "ndvi_minimum", 
+  y = "bio15", 
+  z = "presencia", 
+  grid = 100, 
+  point.size.range = c(0.5, 6), 
+  print = TRUE
+)
+
+
+
+#ALGUNAS CONCLUSIONES:
+#ES DIFÍCIL CAPTURAR LA COMPLEJIDAD DE UNA DISTRIBUCIÓN CON SOLO DOS VARIABLES
+#AÑADIR INTERACCIONES INCREMENTA LA COMPLEJIDAD DEL MODELO
+#AÑADIR TÉRMINOS POLINOMIALES A LAS VARIABLES INCREMENTA LA COMPLEJIDAD DEL MODELO
+#INCREMENTOS INNECESARIOS DE COMPLEJIDAD NO AYUDAN A ALCANZAR UN MODELO INTERPRETABLE
+
+rm(temp.glm, temp.glm.mapa)
 
 
 #VAMOS A TRABAJAR CON TODAS LAS VARIABLES
-#----------------------------------------
+################################################################
+################################################################
+
+
 #GENERA FÓRMULAS PARA LOS MODELOS DE REGRESIÓN
+#---------------------------------------------------
 #formula de regresión polinomial de grado 2 sin interacciones
-formula.regresion.poly<-as.formula(paste("presencia ~ poly(", paste(names(variables), collapse=", 2) + poly("), ", 2)", collapse=""))
-formula.regresion.poly
-
-#NOTA IMPORTANTE: VAMOS A CALIBRAR CADA MODELO CON AUSENCIAS, PSEUDO-AUSENCIAS Y BACKGROUND, PARA APRENDER COMO FUNCIONA CADA ALGORITMO CON ELLAS
-
-#BACKGROUND
-m.glm.background<-glm(formula.regresion.poly, family=binomial(link=logit), data=presencia.background.entrenamiento)
-
-#BACKGROUND PONDERADO
-pesos<-WeightPresenceBackground(presencia.background.entrenamiento[ , "presencia"])
-#la función WeightPresenceBackground cuenta el número de presencias, el número de puntos de background, divide 1 por cada uno de ellos, y genera un vector con los valores resultantes
-#para casos ponderados ponemos family=quasibinomial
-m.glm.backgroundw<-glm(formula.regresion.poly, family=quasibinomial(link=logit), data=presencia.background.entrenamiento, weights=pesos)
-
-#AUSENCIA
-m.glm.ausencia<-glm(formula.regresion.poly, family=binomial(link=logit), data=presencia.ausencia.entrenamiento)
-
-#PSEUDOAUSENCIA
-m.glm.pseudoausencia<-glm(formula.regresion.poly, family=binomial(link=logit), data=presencia.pseudoausencia.entrenamiento)
+glm.formula <- as.formula(
+  paste(
+    "presencia ~ poly(",
+    paste(sp$variables.seleccionadas,
+    collapse=", 2, raw=TRUE) + poly("), 
+    ", 2, raw=TRUE)", 
+    collapse=""
+    )
+  )
+glm.formula
 
 
-#DIBUJAMOS LAS CURVAS DE RESPUESTA
-help(plotmo)
-#fíjate en las diferencias entre las curvas de respuesta de los modelos de background
-plotmo(m.glm.background, level=0.68)
-plotmo(m.glm.backgroundw, level=0.68)
-plotmo(m.glm.ausencia, level=0.68)
-plotmo(m.glm.pseudoausencia, level=0.68)
+#AJUSTAMOS MODELO
+#---------------------------------------------------
+temp.glm <- glm(
+  glm.formula,
+  family = quasibinomial(link = logit), 
+  data = pb, 
+  weights = pb.w
+)
 
-#resumen de los modelos
-summary(m.glm.background)
-summary(m.glm.backgroundw)
-summary(m.glm.ausencia)
-summary(m.glm.pseudoausencia)
+#coeficientes estandarizados
+summary(lm.beta::lm.beta(temp.glm))
+#algunas variables no aportan nada:
+#segundo término polinomial de ndvi_minimum
+#bio15
+#segundo término polinomial de bio13
+#human footprint
 
-#devianza explicada
-Dsquared(m.glm.background)
-Dsquared(m.glm.backgroundw)
-Dsquared(m.glm.ausencia)
-Dsquared(m.glm.pseudoausencia)
-
-#PREDICCION GEOGRAFICA
-m.glm.background.mapa<-predict(variables, m.glm.background, type="response")
-m.glm.backgroundw.mapa<-predict(variables, m.glm.backgroundw, type="response")
-m.glm.ausencia.mapa<-predict(variables, m.glm.ausencia, type="response")
-m.glm.pseudoausencia.mapa<-predict(variables, m.glm.pseudoausencia, type="response")
-
-#MAPAS
-par(mfrow=c(2,2))
-plot(m.glm.background.mapa, main="background")
-plot(m.glm.backgroundw.mapa, main="background ponderado")
-plot(m.glm.ausencia.mapa, main="absence")
-plot(m.glm.pseudoausencia.mapa, main="pseudo-absence")
-
-#guarda los modelos
-writeRaster(m.glm.backgroundw.mapa, filename="./resultados/modelos/glm_background.asc", format="ascii", overwrite=TRUE)
-writeRaster(m.glm.ausencia.mapa, filename="./resultados/modelos/glm_ausencia.asc", format="ascii", overwrite=TRUE)
-writeRaster(m.glm.pseudoausencia.mapa, filename="./resultados/modelos/glm_pseudoausencia.asc", format="ascii", overwrite=TRUE)
+#D cuadrado
+Dsquared(temp.glm)
 
 
+#CURVAS DE RESPUESTA
+#---------------------------------------------------
+x11(width = 15, height = 10)
+plotmo::plotmo(
+  temp.glm, 
+  level = 0.68, 
+  all2 = TRUE
+  )
+#la curva de respuesta de topo_slope no tiene sentido ecológico
 
-#borra el mapa y el modelo de la memoria
-rm(formula.regresion.poly, m.glm.ausencia, m.glm.ausencia.mapa, m.glm.background, m.glm.background.mapa, m.glm.backgroundw, m.glm.backgroundw.mapa, m.glm.interaccion, m.glm.pseudoausencia, m.glm.pseudoausencia.mapa, m.glm.seleccion, n.background, n.presencias, m.glm.temp.mapa, m.glm.temp, pesos)
-gc()
+
+#REHACEMOS LA FÓRMULA DEL MODELO
+#---------------------------------------------------
+glm.formula <- as.formula(
+  presencia ~ 
+    ndvi_minimum +
+    bio6 +
+    poly(landcover_veg_herb, 2, raw = TRUE) +
+    topo_slope +
+    bio13 +
+    human_footprint
+  )
+glm.formula
 
 
+#REHACEMOS LA FÓRMULA DEL MODELO
+#---------------------------------------------------
+temp.glm <- glm(
+  glm.formula,
+  family = quasibinomial(link = logit), 
+  data = pb, 
+  weights = pb.w
+)
+
+#coeficientes estandarizados
+summary(lm.beta::lm.beta(temp.glm))
+
+#D cuadrado
+Dsquared(temp.glm)
+
+
+#CURVAS DE RESPUESTA
+#---------------------------------------------------
+x11(width = 15, height = 10)
+plotmo::plotmo(
+  temp.glm, 
+  level = 0.68, 
+  all2 = TRUE
+)
+
+x11(width = 15, height = 10)
+p1 <- plotInteraction(
+  model = temp.glm, 
+  data = pb, 
+  x = "ndvi_minimum", 
+  y = "bio6", 
+  z = "presencia", 
+  grid = 100, 
+  point.size.range = c(0.5, 6), 
+  print = TRUE
+)
+
+
+#PREDICCIÓN A MAPA
+#---------------------------------------------------
+#prediccion
+temp.glm.mapa <- raster::predict(
+  object = variables$brick, 
+  model = temp.glm, 
+  type="response"
+)
+
+#dibujamos mapa
+x11(width = 15, height = 10)
+par(mar = c(0, 0, 0, 0))
+raster::plot(
+  temp.glm.mapa, 
+  col = viridis::viridis(100, direction = -1)
+)
+
+
+#BONUS TRACK: IMPORTANCIA LOCAL DE LAS VARIABLES
+#################################################
+#################################################
+#esta función ajusta un modelo lineal localmente
+#el modelo es presencia ~ variables
+#se ajusta en un área definida por scale.factor
+#scale.factor = 10 indica que el modelo lineal se ajusta en un área de 10x10 píxeles
+#se ajustan tantos modelos como ventanas de 10x10 pixeles hay en las variables
+
+#CÁLCULO DE LA IMPORTANCIA LOCAL
+#---------------------------------------------------
+local.importance <- mapLocalImportance(
+  predictors.brick = variables$brick[[sp$variables.seleccionadas]], 
+  response.raster = temp.glm.mapa, 
+  scale.factor = 6 #mínimo es 5
+  )
+
+#qué hay dentro del resultado?
+names(local.importance)
+
+#veamos algunos ejemplos
+x11(height = 10, width = 15)
+par(mfrow = c(1, 2))
+plot(local.importance[["bio6_R2_6"]],
+     col = colorRampPalette(RColorBrewer::brewer.pal(9, "Blues"))(100),
+     main = "R2")
+plot(local.importance[["bio6_coef_6"]],
+     col = colorRampPalette(RColorBrewer::brewer.pal(9, "RdBu"))(100),
+     main = "Coefficient")
+
+
+#CERRANDO SECCIÓN
+#---------------------------------------------------
+#guardando modelos
+names(temp.glm.mapa) <- "glm"
+modelos.brick$glm <- temp.glm.mapa
+modelos.list$glm <- temp.glm
+modelos.formulas$glm <- glm.formula
+
+#cerrando gráficos y eliminando objetos
+graphics.off()
+rm(temp.glm, temp.glm.mapa, glm.formula, local.importance)
+
+
+
+
+#####################################
 #####################################
 #MODELOS ADITIVOS GENERALIZADOS (GAM)
 #####################################
+#####################################
+library(mgcv)
 
-#GENERA LA FÓRMULA PARA GAM
-formula.gam<-as.formula(paste("presencia ~ s(", paste(names(variables), collapse=") + s("), ")", collapse=""))
+#GAM CON UNA SOLA VARIABLE
+#---------------------------------------------------
+temp.gam <- mgcv::gam(
+  presencia ~ s(ndvi_minimum),
+  family = quasibinomial(link = logit), 
+  data = pb, 
+  weights = pb.w
+)
+
+#resultado
+lm.beta::lm.beta(temp.gam)
+
+#vemos curva de respuesta sobre densidad
+x11(width = 15, height = 10)
+plotRespuesta(
+  modelo = temp.gam, 
+  presencias = pb, 
+  variable = "ndvi_minimum"
+)
+
+
+#EL PARÁMETRO k
+########################################################
+########################################################
+k.plots <- list()
+
+#ITERAMOS POR VALORES DE K
+#---------------------------------------------------
+for(k in 1:16){
+  
+  #ajustamos modelo
+  temp.gam <- mgcv::gam(
+    presencia ~ s(ndvi_minimum, k = k),
+    family = quasibinomial(link = logit), 
+    data = pb, 
+    weights = pb.w
+  )
+  
+  #resultado
+  lm.beta::lm.beta(temp.gam)
+  
+  #vemos curva de respuesta sobre densidad
+  k.plots[[k]] <- plotRespuesta(
+    modelo = temp.gam, 
+    presencias = pb, 
+    variable = "ndvi_minimum"
+  )
+  
+}
+
+#plotea todo junto
+x11(width = 15, height = 10)
+cowplot::plot_grid(plotlist = k.plots)
+
+
+
+#UN MODELO CON TODAS LAS VARIABLES
+####################################################################
+####################################################################
+
+#FÓRMULA
+#---------------------------------------------------
+formula.gam <- as.formula(
+  paste(
+    "presencia ~ s(", 
+    paste(
+      sp$variables.seleccionadas, 
+      collapse = ") + s("
+      ),
+    ")", collapse=""
+    )
+  )
 formula.gam
+#Fíjate que requiere encapsular las variables en una función llamada "s()" (de "smoothing")
+#Esto es un requerimiento de los modelos GAM, 
 
-#BACKGROUND
-m.gam.background<-gam(formula.gam, family=binomial(link=logit), data=presencia.background.entrenamiento)
 
-#BACKGROUND PONDERADO ojo a weights=pesos
-pesos<-WeightPresenceBackground(presencia.background.entrenamiento[ , "presencia"])
-m.gam.backgroundw<-gam(formula.gam, family=quasibinomial(link=logit), data=presencia.background.entrenamiento, weights=pesos)
+#AJUSTANDO EL MODELO
+#---------------------------------------------------
+#select=TRUE cada término puede ser penalizado a 0 si no aporta nada al modelo.
+temp.gam <- mgcv::gam(
+  formula.gam, 
+  family = quasibinomial(link = logit), 
+  data = pb, 
+  select = TRUE, #regularización
+  gamma = 1, #intensidad de la regularización
+  weights = pb.w
+  )
 
-#AUSENCIA
-m.gam.ausencia<-gam(formula.gam, family=binomial(link=logit), data=presencia.ausencia.entrenamiento)
+#resultado
+summary(temp.gam)
 
-#PSEUDO AUSENCIA
-m.gam.pseudoausencia<-gam(formula.gam, family=binomial(link=logit), data=presencia.pseudoausencia.entrenamiento)
-
-#DIBUJAMOS LAS CURVAS DE RESPUESTA
-plotmo(m.gam.background, level=0.68, type="response")
-plotmo(m.gam.backgroundw, level=0.68, type="response")
-plotmo(m.gam.ausencia, level=0.68, type="response")
-plotmo(m.gam.pseudoausencia, level=0.68, type="response")
-#¿CREES QUE TIENEN MÁS SENTIDO QUE LAS ANTERIORES?
-
-#resumen de los modelos
-summary(m.gam.background)
-summary(m.gam.backgroundw)
-summary(m.gam.ausencia)
-summary(m.gam.pseudoausencia)
+#R cuadrado
+summary(temp.gam)$r.sq
 
 #devianza explicada
-Dsquared(m.gam.background)
-Dsquared(m.gam.backgroundw)
-Dsquared(m.gam.ausencia)
-Dsquared(m.gam.pseudoausencia)
+summary(temp.gam)$dev.expl
 
-#PREDICCION GEOGRAFICA
-m.gam.background.mapa<-predict(variables, m.gam.background, type="response")
-m.gam.backgroundw.mapa<-predict(variables, m.gam.backgroundw, type="response")
-m.gam.ausencia.mapa<-predict(variables, m.gam.ausencia, type="response")
-m.gam.pseudoausencia.mapa<-predict(variables, m.gam.pseudoausencia, type="response")
+#UBRE - UnBiaed Risk Estimator
+#INTERPRETACIÓN: valores más pequeños indican mejores modelos
+summary(temp.gam)$sp.criterion
 
-#MAPAS
-par(mfrow=c(2,2))
-plot(m.gam.background.mapa, main="background")
-plot(m.gam.backgroundw.mapa, main="background ponderado")
-plot(m.gam.ausencia.mapa, main="absence")
-plot(m.gam.pseudoausencia.mapa, main="pseudo-absence")
-
-#guarda los modelos
-writeRaster(m.gam.backgroundw.mapa, filename="./resultados/modelos/gam_background.asc", format="ascii", overwrite=TRUE)
-writeRaster(m.gam.ausencia.mapa, filename="./resultados/modelos/gam_ausencia.asc", format="ascii", overwrite=TRUE)
-writeRaster(m.gam.pseudoausencia.mapa, filename="./resultados/modelos/gam_pseudoausencia.asc", format="ascii", overwrite=TRUE)
-
-#borra el mapa y el modelo de la memoria
-rm(m.gam.ausencia, m.gam.ausencia.mapa, m.gam.background, m.gam.background.mapa, m.gam.backgroundw, m.gam.backgroundw.mapa, m.gam.pseudoausencia, m.gam.pseudoausencia.mapa, pesos, formula.gam)
-gc()
-
-
-
-##############
-#RANDOM FOREST
-##############
-#AYUDA DE randomForest
-help(randomForest)
-
-#PREPARAMOS LA FÓRMULA
-formula.regresion<-as.formula(paste("presencia ~ ", paste(names(variables), collapse="+"), collapse=""))
-formula.regresion
-
-#BACKGROUND
-m.rf.background<-randomForest(formula.regresion, data=presencia.background.entrenamiento, importance=TRUE, ntree=500, mtry=3, nodesize=10)
-
-#AUSENCIA
-m.rf.ausencia<-randomForest(formula.regresion, data=presencia.ausencia.entrenamiento, importance=TRUE, ntree=500, mtry=3, nodesize=10)
-
-#PSEUDO-AUSENCIA
-m.rf.pseudoausencia<-randomForest(formula.regresion, data=presencia.pseudoausencia.entrenamiento, importance=TRUE, ntree=500, mtry=3, nodesize=10)
-
-#ERROR PLOT
-par(mfrow=c(3, 1))
-plot(m.rf.background)
-plot(m.rf.ausencia)
-plot(m.rf.pseudoausencia)
-
-#DEVIANZA EXPLICADA
-print(m.rf.background)
-print(m.rf.ausencia)
-print(m.rf.pseudoausencia)
 
 #CURVAS DE RESPUESTA
-plotmo(m.rf.background)
-plotmo(m.rf.ausencia)
-plotmo(m.rf.pseudoausencia)
+#---------------------------------------------------
+x11(width = 15, height = 10)
+plotmo::plotmo(
+  temp.gam, 
+  level = 0.68, 
+  all2 = TRUE,
+  type = "response",
+  col = viridis(100)
+)
+
+x11(width = 15, height = 10)
+p1 <- plotInteraction(
+  model = temp.gam, 
+  data = pb, 
+  x = "ndvi_minimum", 
+  y = "bio6", 
+  z = "presencia", 
+  grid = 100, 
+  point.size.range = c(0.5, 6), 
+  print = TRUE
+)
+
+
+
+#PREDICCIÓN A MAPA
+#---------------------------------------------------
+temp.gam.mapa <- raster::predict(
+  object = variables$brick, 
+  model = temp.gam, 
+  type="response"
+)
+
+#dibujamos mapa
+x11(width = 15, height = 10)
+raster::plot(
+  temp.gam.mapa,
+  col = viridis::viridis(100, direction = -1)
+)
+
+#guardando modelos
+names(temp.gam.mapa) <- "gam"
+modelos.brick$gam <- temp.gam.mapa
+modelos.list$gam <- temp.gam
+modelos.formulas$gam <- formula.gam
+
+
+
+#EFECTO DE LA REGULARIZACIÓN (análisis de sensibilidad)
+#######################################################
+#######################################################
+#vectores de resultados
+Gamma <- 1:8
+Rsquared <- Dsquare <- UBRE <- rep(NA, length(Gamma))
+
+#iteramos por los valores de G
+#---------------------------------------------------
+for(Gamma.i in Gamma){
+  
+  #ajustamos modelo
+  temp.gam <- mgcv::gam(
+    formula.gam, 
+    family = quasibinomial(link = logit), 
+    data = pb, 
+    select = TRUE,
+    gamma = Gamma.i, #cambiamos este valor cada vez!
+    weights = pb.w
+  )
+  
+  #escribimos resultados
+  Rsquared[Gamma.i] <- summary(temp.gam)$r.sq
+  Dsquare[Gamma.i] <- summary(temp.gam)$dev.expl
+  UBRE[Gamma.i] <- summary(temp.gam)$sp.criterion
+  
+}#fin de iteraciones
+
+#a dataframe en formato largo
+sensitivity <- tidyr::gather(
+  data.frame(Gamma, Rsquared, Dsquare, UBRE), 
+  variable, 
+  valor, 
+  2:4
+  )
+
+#plot
+x11(width = 15, height = 10)
+ggplot(
+  data = sensitivity,
+  aes(
+    x = Gamma, 
+    y = valor
+    )
+  ) + 
+  geom_line() + 
+  facet_wrap(
+    "variable", 
+    scales = "free", 
+    ncol = 1
+    ) + 
+  scale_x_continuous(breaks = Gamma)
+
+
+#CERRANDO SECCIÓN
+#---------------------------------------------------
+graphics.off()
+rm(k.plots, sensitivity, temp.gam, temp.gam.mapa, k, Gamma, Gamma.i, UBRE, Rsquared, Dsquare, formula.gam)
+
+
+
+
+#####################################
+#####################################
+#MAXENT
+#####################################
+#####################################
+library(maxnet)
+
+#MODELO CON UNA VARIABLE
+#####################################
+#ajustamos el modelo con sus argumentos por defecto
+#nota sobre argumento "data": tiene que ser un dataframe!
+
+#AJUSTE DEL MODELO
+#---------------------------------------------------
+temp.maxent <- maxnet::maxnet(
+  p = pb$presencia, 
+  data = data.frame(ndvi_minimum = pb[, "ndvi_minimum"]),
+  regmult = 0.01
+  )
+
+#qué hay dentro del modelo?
+str(temp.maxent)
+
+#coeficientes del predictor y sus transformaciones
+data.frame(
+  importance = sort(
+    abs(temp.maxent$betas)[1:10], 
+    decreasing = TRUE
+    )
+  )
+
+
+#CURVAS DE RESPUESTA
+#---------------------------------------------------
+x11(width = 15, height = 10)
+plot(temp.maxent, type="cloglog")
+
+x11(width = 15, height = 10)
+plotRespuesta(
+  modelo = temp.maxent, 
+  presencias = pb, 
+  variable = "ndvi_minimum"
+)
+
+
+#PREDICCIÓN
+#---------------------------------------------------
+temp.maxent.mapa <- raster::predict(
+  object = variables$brick, 
+  model = temp.maxent, 
+  type="cloglog"
+  )
+
+#dibujamos mapa
+x11(width = 15, height = 10)
+raster::plot(
+  temp.maxent.mapa,
+  col = viridis::viridis(100, direction = -1)
+)
+
+
+
+
+#MAXENT TIENE UN PARÁMETRO PRAA CONTROLAR LA COMPLEJIDAD DEL MODELO: "regmult"
+#EL PARÁMETRO regmult
+########################################################
+########################################################
+
+#lista para guardar resultados y valores del parámetro a explorar
+k.plots <- list()
+regmult.values <- seq(
+  0.01, 
+  15, 
+  length.out = 12
+  )
+regmult.values
+
+#iteramos sobre valores de regmult
+#---------------------------------------------------
+for(i in 1:length(regmult.values)){
+  
+  #ajustamos modelo
+  temp.maxent <- maxnet::maxnet(
+    p = pb$presencia, 
+    data = data.frame(ndvi_minimum = pb[, "ndvi_minimum"]),
+    regmult = regmult.values[i]
+  )
+  
+  #vemos curva de respuesta sobre densidad
+  k.plots[[i]] <- plotRespuesta(
+    modelo = temp.maxent, 
+    presencias = pb, 
+    variable = "ndvi_minimum"
+  )
+  
+}
+
+#plotea todo junto
+x11(width = 15, height = 10)
+cowplot::plot_grid(plotlist = k.plots)
+
+
+
+#MAXENT CON TODAS LAS VARIABLES
+##############################################################
+##############################################################
+
+#AJUSTE DEL MODELO
+#---------------------------------------------------
+#ajustamos el modelo con sus argumentos por defecto
+#nota sobre argumento "data": tiene que ser un dataframe!
+temp.maxent <- maxnet::maxnet(
+  p = pb$presencia, 
+  data = pb[, sp$variables.seleccionadas],
+  regmult = 1
+)
+
+#coeficientes del predictor y sus transformaciones
+data.frame(
+  importance = sort(
+    abs(temp.maxent$betas)[1:10], 
+    decreasing = TRUE
+  )
+)
+
+
+#CURVAS DE RESPUESTA
+#---------------------------------------------------
+x11(width = 15, height = 10)
+p1 <- plotInteraction(
+  model = temp.maxent, 
+  data = pb, 
+  x = "ndvi_minimum", 
+  y = "bio6", 
+  z = "presencia", 
+  grid = 100, 
+  point.size.range = c(0.5, 6), 
+  print = TRUE
+)
+
+#curvas de respuesta
+x11(width = 15, height = 10)
+plot(temp.maxent, type="cloglog")
+
+
+#PREDICCIÓN A MAPA
+#---------------------------------------------------
+temp.maxent.mapa <- raster::predict(
+  object = variables$brick, 
+  model = temp.maxent, 
+  type="cloglog"
+)
+
+#dibujamos mapa
+x11(width = 15, height = 10)
+raster::plot(
+  temp.maxent.mapa,
+  col = viridis::viridis(100, direction = -1)
+)
+
+
+#CERRANDO SECCIÓN
+#---------------------------------------------------
+#guardando modelos
+names(temp.maxent.mapa) <- "maxent"
+modelos.brick$maxent <- temp.maxent.mapa
+modelos.list[["maxent"]] <- temp.maxent
+
+#cerrando gráficos y eliminando objetos
+graphics.off()
+rm(temp.maxent, temp.maxent.mapa, k.plots, i, regmult.values)
+
+
+
+
+#####################################
+#####################################
+#ÁRBOLES DE PARTICIÓN RECURSIVA
+#####################################
+#####################################
+library(rpart)
+library(rpart.plot)
+#https://cran.r-project.org/web/packages/rpart/vignettes/longintro.pdf
+
+
+#MODELO CON TRES VARIABLES (hacerlo con una no tiene sentido)
+#---------------------------------------------------
+temp.rpart <- rpart(
+  formula = presencia ~ bio6 + ndvi_minimum + topo_slope,
+  data = pb,
+  weights = pb.w,
+  control = rpart.control(minbucket = 10)
+  )
+
+#resumen
+summary(temp.rpart)
+#Variable importance
+
+#ploteamos el árbol
+x11(width = 15, height = 10)
+rpart.plot(
+  temp.rpart, 
+  type = 5, 
+  box.palette = viridis::viridis(
+    n = 100, 
+    alpha = 0.6, 
+    direction = -1,
+    begin = 0.1),
+  cex = 1.5
+  )
+
+
+#SUPERFICIES DE RESPUESTA
+#---------------------------------------------------
+p1 <- plotInteraction(
+  model = temp.rpart, 
+  data = pb, 
+  x = "ndvi_minimum", 
+  y = "bio6", 
+  z = "presencia", 
+  grid = 100, 
+  point.size.range = c(0.5, 6), 
+  print = FALSE
+  )
+
+p2 <- plotInteraction(
+  model = temp.rpart, 
+  data = pb, 
+  x = "topo_slope", 
+  y = "bio6", 
+  z = "presencia", 
+  grid = 100, 
+  point.size.range = c(0.5, 6), 
+  print = FALSE
+)
+
+p3 <- plotInteraction(
+  model = temp.rpart, 
+  data = pb, 
+  x = "ndvi_minimum", 
+  y = "topo_slope", 
+  z = "presencia", 
+  grid = 100, 
+  point.size.range = c(0.5, 6), 
+  print = FALSE
+)
+
+x11(width = 15, height = 10)
+cowplot::plot_grid(p1, p2, p3, nrow = 1)
+
+
+
+#PREDICCIÓN A MAPA
+#---------------------------------------------------
+temp.rpart.mapa <- predict(
+  object = variables$brick, 
+  model = temp.rpart
+)
+
+#dibujamos mapa
+x11(width = 15, height = 10)
+raster::plot(
+  temp.rpart.mapa,
+  col = viridis::viridis(
+    n = 100,
+    direction = -1
+    )
+  )
+
+
+
+#CON TODAS LAS VARIABLES
+########################################################
+########################################################
+
+#FÓRMULA
+#---------------------------------------------------
+formula.rpart <- as.formula(
+  paste(
+    "presencia ~ ", 
+    paste(
+      sp$variables.seleccionadas, 
+      collapse = " + "
+    )
+    , collapse=""
+  )
+)
+formula.rpart
+
+
+#AJUSTE DEL MODELO
+#---------------------------------------------------
+temp.rpart <- rpart(
+  formula = formula.rpart,
+  data = pb[, c("presencia", sp$variables.seleccionadas)],
+  weights = pb.w,
+  control = rpart.control(minbucket = 10)
+)
+
+
+x11(width = 10, height = 6)
+rpart.plot(
+  temp.rpart, 
+  type = 5, 
+  box.palette = viridis::viridis(
+    n = 100, 
+    alpha = 0.6, 
+    direction = -1,
+    begin = 0.1),
+  cex = 1
+)
+
+
+#PREDICCIÓN A MAPA
+#---------------------------------------------------
+temp.rpart.mapa <- dismo::predict(
+  object = variables$brick, 
+  model = temp.rpart,
+  type = "prob"
+)
+
+#dibujamos mapa
+x11(width = 15, height = 10)
+raster::plot(
+  temp.rpart.mapa,
+  col = viridis::viridis(
+    n = 100,
+    direction = -1
+  )
+)
+
+
+#CERRANDO SECCIÓN
+#---------------------------------------------------
+#guardando modelos
+names(temp.rpart.mapa) <- "rpart"
+modelos.brick$rpart <- temp.rpart.mapa
+modelos.list$rpart <- temp.rpart
+modelos.formulas$rpart <- formula.rpart
+
+#cerrando gráficos y eliminando objetos
+graphics.off()
+rm(p1, p2, p3, temp.rpart, temp.rpart.mapa, formula.rpart)
+
+
+
+#####################################
+#####################################
+#RANDOM FOREST
+#####################################
+#####################################
+library(ranger)
+library(pdp) #curvas de respuesta: https://bgreenwell.github.io/pdp/articles/pdp.html
+
+
+#FÓRMULA
+#---------------------------------------------------
+formula.rf <- as.formula(
+  paste(
+    "presencia ~ ", 
+    paste(
+      sp$variables.seleccionadas, 
+      collapse = " + "
+    )
+    , collapse=""
+  )
+)
+formula.rf
+
+
+#MODELO CON TODAS LAS VARIABLES
+#---------------------------------------------------
+temp.rf <- ranger::ranger(
+  formula = formula.rf,
+  data = pb,
+  case.weights = pb.w,
+  num.trees = 5000,
+  min.node.size = 40, #<- parámetro importante
+  mtry = 3,           #<- parámetro importante
+  importance = "permutation", 
+  scale.permutation.importance = TRUE
+)
+
+
+#ANÁLISIS DE SENSIBILIDAD A ESOS PARÁMETROS
+#---------------------------------------------------
+#Random Forest tiene 2 parámetros clave
+#mtry: variables seleccionadas en cada split
+#min.node.size: número de casos en un nodo terminal
+#vamos a ver como afectan al modelo
+p <- sensibilidadRF(
+  formula = formula.rf,
+  presencias =  pb,
+  tipo = "background",
+  pesos = pb.w,
+  mtry.list = 1:length(sp$variables.seleccionadas),
+  mns.list = c(10, 20, 30, 40, 50),
+  num.trees = 5000
+)
+
+
+#REPETIMOS EL MODELO CON LOS PARÁMETROS ELEGIDOS
+#---------------------------------------------------
+#repetimos el modelo con los parámetros que más incrementan R-squared
+temp.rf <- ranger::ranger(
+  formula = formula.rf,
+  data = pb,
+  case.weights = pb.w,
+  num.trees = 5000,
+  min.node.size = 20,
+  mtry = 2, 
+  importance = "permutation", 
+  scale.permutation.importance = TRUE
+)
+
+#resultado
+print(temp.rf)
+
+#R-cuadrado (obtenido del out-of-bag)
+#es irrelevante cuando el modelo se entrena con background con pesos
+#pero funciona correctamente cuando se usan pseudoausencias
+temp.rf$r.squared
+
+#miramos un árbol por dentro
+treeInfo(temp.rf, tree=1)
+
 
 #IMPORTANCIA DE LAS VARIABLES
-varImpPlot(m.rf.background)
-varImpPlot(m.rf.ausencia)
-varImpPlot(m.rf.pseudoausencia)
+#---------------------------------------------------
+#está guardada en el modelo
+temp.rf$variable.importance 
 
-#PREDICCIÓN GEOGRÁFICA
-m.rf.background.mapa<-predict(variables, m.rf.background, type="response")
-m.rf.ausencia.mapa<-predict(variables, m.rf.ausencia, type="response")
-m.rf.pseudoausencia.mapa<-predict(variables, m.rf.pseudoausencia, type="response")
+#lo reordenamos
+importancia <- sort(
+  temp.rf$variable.importance,
+  decreasing = TRUE
+)
 
-#MAPA
-par(mfrow=c(1,3))
-plot(m.rf.background.mapa, main="background")
-plot(m.rf.ausencia.mapa, main="ausencia")
-plot(m.rf.pseudoausencia.mapa, main="pseudoausencia")
+#a dataframe
+importancia <- data.frame(
+  variable = names(importancia),
+  importancia = importancia
+)
+row.names(importancia) <- NULL
+importancia
 
-#GUARDA EL MODELO
-writeRaster(m.rf.background.mapa, filename="./resultados/modelos/rf_background.asc", format="ascii", overwrite=TRUE)
-writeRaster(m.rf.ausencia.mapa, filename="./resultados/modelos/rf_ausencia.asc", format="ascii", overwrite=TRUE)
-writeRaster(m.rf.pseudoausencia.mapa, filename="./resultados/modelos/rf_pseudoausencia.asc", format="ascii", overwrite=TRUE)
+#ploteamos la importancia de las variables
+x11(width = 10, height = 10)
+ggplot(
+  data = importancia, 
+  aes(
+    x = variable, 
+    y = importancia,
+    fill = importancia)
+)+ 
+  geom_bar(
+    stat="identity", 
+    position="dodge"
+  ) + 
+  viridis::scale_fill_viridis(direction = -1) +
+  theme(legend.position = "none") +
+  coord_flip()
 
-#borra objetos que no nos sirven
-rm(m.rf.ausencia, m.rf.ausencia.mapa, m.rf.background, m.rf.background.mapa, m.rf.pseudoausencia, m.rf.pseudoausencia.mapa)
-gc()
+
+#BONUS TRACK: importancia de las variables para una observación concreta con breakDown (link to paper: https://arxiv.org/pdf/1804.01955.pdf)
+##################################################################################
+##################################################################################
+#función para predecir probabilidad
+predict.rf <- function(model, new_observation){
+  predict(model, new_observation, type = "response")$predictions
+}
+
+#elegimos una presencia por su índice
+presencia.i <- 31
+
+#predicción de probabilidad para una presencia
+prediccion.presencia.1 <- predict.rf(
+  model = temp.rf,
+  new_observation = pb[presencia.i, ]
+)
+prediccion.presencia.1
+
+#importancia de las variables
+explicacion.presencia.1 <- breakDown::broken(
+  model = temp.rf,
+  new_observation = pb[presencia.i, ],
+  data = pb[, sp$variables.seleccionadas],
+  predict.function = predict.rf,
+  baseline = "intercept"
+)
+x11(height = 10, width = 15)
+plot(explicacion.presencia.1) + theme(text = element_text(size = 40))
+
+
+#CURVAS DE RESPUESTA PARA UNA VARIABLE
+#---------------------------------------------------
+x11(width = 10, height = 10)
+ggplot2::autoplot(
+  pdp::partial(
+    temp.rf, 
+    pred.var = "ndvi_minimum"
+  ), 
+  ylab = "Response"
+) 
+
+
+#CURVAS DE RESPUESTA PARA TODAS LAS VARIABLES
+#---------------------------------------------------
+plot.list <- list()
+for(variable.i in sp$variables.seleccionadas){
+  plot.list[[variable.i]] <- ggplot2::autoplot(
+    pdp::partial(
+      temp.rf, 
+      pred.var = variable.i
+    ), 
+    ylab = "Response"
+  ) 
+}
+x11(width = 15, height = 10)
+cowplot::plot_grid(plotlist = plot.list)
+
+
+#INTERACCIÓN ENTRE VARIABLES
+#---------------------------------------------------
+x11(width = 15, height = 10)
+plotInteraction(
+  model = temp.rf, 
+  data = pb, 
+  x = "ndvi_minimum", 
+  y = "bio6", 
+  z = "presencia", 
+  grid = 100, 
+  point.size.range = c(0.5, 6), 
+  print = FALSE
+)
+
+
+#PREDICCIÓN A MAPA
+#---------------------------------------------------
+temp.rf.mapa <- raster::predict(
+  variables$brick, 
+  temp.rf, 
+  type = 'response', 
+  fun = function(temp.rf, ...) predict(temp.rf, ...)$predictions #<- OJO CON ESTO!!
+)
+
+#plotear
+x11(width = 10, height = 10)
+raster::plot(
+  temp.rf.mapa,
+  col = viridis::viridis(
+    n = 100,
+    direction = -1
+  )
+)
+
+
+#CERRANDO SECCIÓN
+#---------------------------------------------------
+#guardando modelos
+names(temp.rf.mapa) <- "rf"
+modelos.brick$rf <- temp.rf.mapa
+modelos.list$rf <- temp.rf
+modelos.formulas$rf <- formula.rf
+
+#cerrando gráficos y eliminando objetos
+graphics.off()
+rm(temp.rf, temp.rf.mapa, plot.list, variable.i, importancia, formula.rf, explicacion.presencia.1, prediccion.presencia.1, presencia.i)
+
+#VAMOS A GUARDAR LOS MODELOS EN LA LISTA sp
+sp$modelos$formulas <- modelos.formulas
+sp$modelos$mapas <- modelos.brick
+sp$modelos$modelos <- modelos.list
+rm(modelos.formulas, modelos.brick, modelos.list, p)
 
 
 
-#######################################################################################
-#######################################################################################
-#ENSAMBLADO DE MODELOS
-#######################################################################################
-#######################################################################################
+
+#BONUS TRACK: MODELO RANDOM FOREST PARA VARIAS ESPECIES
+########################################################
+########################################################
+#Datos de presencia de varias especies de Quercus en Europa tomados de la base de datos EU-forest
+load("data/quercus.RData")
+str(quercus)
+
+#CUANTAS PRESENCIAS TENEMOS DE CADA ESPECIE? 
+quercus.n <- data.frame(table(quercus$species))
+names(quercus.n) <- c("species", "n")
+quercus.n
+
+#CREACIÓN DE PESOS
+quercus.n$pesos <- nrow(quercus) / quercus.n$n
+
+#unimos los pesos a la tabla de presencias
+quercus <- merge(quercus, quercus.n[, c("species", "pesos")], by = "species")
+
+#AÑADIMOS LOS VALORES DE LAS VARIABLES
+quercus <- na.omit(
+  data.frame(
+    quercus,
+    raster::extract(
+      x = variables$brick,
+      y = quercus[, c("x", "y")],
+      df = TRUE
+    )
+  )
+)
+
+#vemos la estructura de la tabla
+str(quercus)
+
+#preparamos la fórmula
+#formula rpart
+quercus.formula <- as.formula(
+  paste(
+    "species ~ ", 
+    paste(
+      sp$variables.seleccionadas, 
+      collapse = " + "
+    )
+    , collapse=""
+  )
+)
+quercus.formula
+
+#AJUSTE DEL MODELO
+quercus.rf <- ranger::ranger(
+  formula = quercus.formula,
+  data = quercus,
+  case.weights = quercus$pesos,
+  probability = TRUE,
+  importance = "permutation", 
+  scale.permutation.importance = TRUE
+)
+
+#miramos el error de predicción
+quercus.rf
+
+#importancia de las variables
+sort(
+  quercus.rf$variable.importance,
+  decreasing = TRUE
+)
+
+#prediciendo la probabilidad de cada clase
+quercus.prob = predict(
+  object = quercus.rf, 
+  data = na.omit(
+    as.data.frame(
+      variables$brick
+    )
+  )
+)$predictions
+
+#curvas de respuesta
+#dataframe para guardar resultado
+quercus.curves <- NULL
+
+#variable a plotear
+variable <- "bio6"
+
+#iterando por cada clase
+for(i in 1:length(colnames(quercus.prob))){
+  
+  #partial dependence plot
+  pdp.temp <- pdp::partial(
+    object = quercus.rf, 
+    type = "classification",
+    prob = TRUE,
+    pred.var = variable,
+    which.class = i, 
+    grid.resolution = 20, 
+    train = quercus
+    )
+  
+  #cambiamos nombre
+  colnames(pdp.temp) <- c("variable.valor", "probabilidad")
+  
+  #a dataframe
+  pdp.temp$species <- colnames(quercus.prob)[i]
+  pdp.temp$variable.nombre <- variable
+  quercus.curves <- rbind(quercus.curves, pdp.temp)
+}
+
+#plot
+x11(height = 10, width = 15)
+ggplot(
+  quercus.curves, 
+  aes(
+    x = variable.valor, 
+    y = probabilidad, 
+    color = probabilidad,
+    group = species
+    )
+) +
+  geom_line(size = 1) + 
+  viridis::scale_color_viridis(direction = -1) +
+  facet_wrap("species", scales = "free_y", ncol = 1) + 
+  ylab("Probability")
 
 
-#ANÁLISIS DE SIMILITUD ENTRE LOS MODELOS
-########################################
-#importa los modelos
-lista.modelos <- list.files(path="./resultados/modelos",pattern='.asc', full.names=TRUE)
-modelos <- brick(stack(lista.modelos))
+#les ponemos coordenadas a esas probabilidades
+#por qué funciona esto? el dataframe de probabilidades tiene el mismo orden que las celdas de variables$brick que tienen valores válidos
+quercus.prob <- data.frame(
+  na.omit(
+    raster::as.data.frame(
+      variables$brick, xy = TRUE
+      )
+    )[, c("x", "y")],
+  quercus.prob
+)
 
-#transforma los modelos en dataframe eliminando nulos
-modelos.df<-na.omit(as.data.frame(modelos))
+#lo pasamos a SpatialPointsDataFrame
+sp::coordinates(quercus.prob) <- ~ x + y
+sp::gridded(quercus.prob) <- TRUE
 
-#calcula matriz de correlaciones
-modelos.cor<-cor(modelos.df)
+#lo pasamos a un brick
+quercus.brick <- raster::brick(quercus.prob)
 
-#transforma matriz de correlación en distancias
-modelos.dis<-abs(as.dist(modelos.cor))
+#ploteamos
+x11(height = 10, width = 15)
+plot(quercus.brick, col = viridis::viridis(100, direction = -1))
 
-#dibuja el árbol de correlación
-dev.off()
-pdf("./resultados/similitud_modelos.pdf", width=25, height=25, pointsize=30)
-plot(hclust(1-modelos.dis))
-dev.off()
+#mapa con el máximo en cada celda
+quercus.brick.max <- raster::which.max(quercus.brick)
 
-#borra objetos que no vamos a usar más
-rm(modelos, modelos.df, modelos.cor, modelos.dis)
-gc()
+#le ponemos una paleta de color más intuitiva
+#creamos una paleta con 8 colores
+paleta.color <- rev(RColorBrewer::brewer.pal(
+  n = length(names(quercus.brick)),
+  name = "Accent"
+))
 
-#ENSAMBLADO
-###########
+#plot con leyenda
+x11(width = 15, height = 10)
+raster::plot(
+  quercus.brick.max, 
+  col = paleta.color, 
+  legend = FALSE
+)
+legend(
+  "bottomleft", 
+  legend = names(quercus.brick), 
+  pch = 15, 
+  col = paleta.color, 
+  cex = 1, 
+  border = ""
+)
 
-#IMPORTA LOS MODELOS A STACKS (SOLO UN TIPO DE MODELOS COMO EJEMPLO)
-lista.modelos.pseudoausencia <- list.files(path="./resultados/modelos",pattern='_pseudoausencia', full.names=TRUE)
-modelos.pseudoausencia <- brick(stack(lista.modelos.pseudoausencia))
-plot(modelos.pseudoausencia)
 
-#ENSAMBLADO MEDIANTE PROMEDIO
-ensamblado.pseudoausencia<-calc(modelos.pseudoausencia, mean, filename="./resultados/modelos/ensamblado_pseudoausencia.asc", overwrite=TRUE)
+rm(quercus, quercus.brick, quercus.brick.max, quercus.curves, quercus.formula, quercus.rf, quercus.n, quercus.prob, pdp.temp, i, paleta.color, variable)
 
-#DESVIACIÓN ESTÁNDAR
-ensamblado.pseudoausencia.desviacion<-calc(modelos.pseudoausencia, sd)
 
-#PLOT
-dev.off()
-#png("./resultados/ensamblados.png", width=4000, height=2200, pointsize=40)
-par(mfrow=c(1,2), mar=c(4,4,4,4), oma=c(2,2,2,2))
-plot(ensamblado.pseudoausencia, main="Media pseudoausencia")
-plot(ensamblado.pseudoausencia.desviacion, main="Desviación pseudoausencia", col=rev(heat.colors(100)))
-#dev.off()
-
-#BORRAMOS OBJETOS QUE YA NO VAMOS A USAR
-rm(modelos.pseudoausencia, ensamblado.pseudoausencia, ensamblado.pseudoausencia.desviacion, lista.modelos, lista.modelos.pseudoausencia)
-gc()
-
-#VOLVEMOS A LAS DIAPOSITIVAS
-############################
 
 
 ##################################
@@ -460,195 +1552,512 @@ gc()
 ##################################
 ##################################
 
-#IMPORTA TODOS LOS MODELOS, INCLUÍDOS EL ENSAMBLADO
-#importa los modelos
-lista.modelos <- list.files(path="./resultados/modelos",pattern='.asc', full.names=TRUE)
-modelos <- brick(stack(lista.modelos))
+###########################################################
+#CALCULANDO AUC CON BOOTSTRAP
+###########################################################
 
-#recuerda que tenemos presencias y ausencias de evaluación
-str(presencia.ausencia.evaluacion)
+#PARÁMETROS GENERALES DE LA EVALUACIÓN
+#lista para guardar resultados de evaluacion
+sp$evaluacion$parametros <- list(
+  repeticiones = 10, 
+  porcentaje.evaluacion = 40, 
+  radio.seleccion.ausencias = 5
+  )
 
-#VAMOS A EMPEZAR EVALUANDO UN ÚNICO MODELO, PARA ENTENDER BIEN EL PROCESO
-#########################################################################
-#vemos los nombres de los modelos
-names(modelos)
+#EVALUACION BIOCLIM
+#-----------------------------------
+sp$evaluacion$bioclim <- bootstrapSDM(
+  brick = variables$brick, 
+  presencias = pb, 
+  respuesta = "presencia", 
+  predictores = sp$variables.seleccionadas, 
+  formula.modelo = NULL, 
+  modelo.nombre = "bioclim", 
+  repeticiones = sp$evaluacion$parametros$repeticiones, 
+  porcentaje.evaluacion = sp$evaluacion$parametros$porcentaje.evaluacion,
+  radio.seleccion.ausencias = sp$evaluacion$parametros$radio.seleccion.ausencias
+)
 
-#nos quedamos con un modelo
-modelo<-modelos[["gam_background"]]
+#la función devuelve varios objetos:
+#1. un brick con todos los mapas de los modelos calibrados
+evaluacion$bioclim$mapas
+x11()
+plot(
+  evaluacion$bioclim$mapas, 
+  col = viridis::viridis(100, direction = -1)
+)
 
-#extraemos los valores de los puntos de evaluación en el modelo
-presencia.ausencia.evaluacion$valores<-extract(modelo, presencia.ausencia.evaluacion[, c("x","y")])
+#2. una lista con los modelos
+sp$evaluacion$bioclim$modelos$glm_1
+summary(sp$evaluacion$bioclim$modelos$glm_1)
+plotmo(sp$evaluacion$bioclim$modelos$glm_1)
 
-#separamos los valores de las presencias y las ausencias
-valores.presencias<-presencia.ausencia.evaluacion[presencia.ausencia.evaluacion$presencia==1, "valores"]
-valores.ausencias<-presencia.ausencia.evaluacion[presencia.ausencia.evaluacion$presencia==0, "valores"]
-
-#aplicamos la función evaluate de la librería dismo
-evaluacion<-evaluate(p=valores.presencias, a=valores.ausencias)
-evaluacion
-
-#plots
-par(mfrow=c(1,3), mar=c(2,2,4,2), oma=c(3,3,5,3))
-density(evaluacion)
-boxplot(evaluacion, col=c("blue", "red"))
-plot(evaluacion, "ROC")
-
-#vemos la estructura del objeto
-str(evaluacion)
-
-#sacamos el valor de auc (fíjate que es una @ en lugar de $ para mirar dentro de los slots)
-auc<-evaluacion@auc
-auc
-
-#borramos objetos que no necesitamos
-rm(modelo, valores.presencias, valores.ausencias, evaluacion, auc, lista.modelos)
-gc()
+#3. un dataframe con los valores de AUC, Boyce index, y el umbral de corte (threshold)
+evaluacion$bioclim$evaluacion
+plot(density(sp$evaluacion$bioclim$evaluacion$auc))
+plot(density(sp$evaluacion$bioclim$evaluacion$boyce))
+plot(density(sp$evaluacion$bioclim$evaluacion$threshold))
 
 
-#AHORA VAMOS A EVALUAR TODOS LOS MODELOS
-########################################
+#EVALUACION GLM
+#---------------------------------------
+sp$evaluacion$glm <- bootstrapSDM(
+  brick = variables$brick, 
+  presencias = pb, 
+  respuesta = "presencia", 
+  predictores = sp$variables.seleccionadas, 
+  formula.modelo = sp$modelos$formulas$glm, 
+  modelo.nombre = "glm", 
+  repeticiones = sp$evaluacion$parametros$repeticiones, 
+  porcentaje.evaluacion = sp$evaluacion$parametros$porcentaje.evaluacion,
+  radio.seleccion.ausencias = sp$evaluacion$parametros$radio.seleccion.ausencias
+)
 
-#extraemos los valores de los puntos de evaluación en el modelo
-valores.puntos.evaluacion<-extract(modelos, presencia.ausencia.evaluacion[, c("x","y")])
-str(valores.puntos.evaluacion)
-#es una lista, pasamos a data.frame
-valores.puntos.evaluacion<-data.frame(valores.puntos.evaluacion)
-str(valores.puntos.evaluacion)
+rm(glm.formula)
 
-#lo unimos con la columna presencia de presencias.test
-valores.puntos.evaluacion$presencia<-presencia.ausencia.evaluacion$presencia
-str(valores.puntos.evaluacion)
 
-#creamos una tabla en blanco para guardar los resultados
-resultados.evaluacion<-data.frame(modelo=character(), auc=numeric(), cor=numeric(), stringsAsFactors=FALSE)
+#EVALUACION GAM (lleva un rato largo)
+#---------------------------------------
+sp$evaluacion$gam <- bootstrapSDM(
+  brick = variables$brick, 
+  presencias = pb, 
+  respuesta = "presencia", 
+  predictores = sp$variables.seleccionadas, 
+  formula.modelo = NULL, 
+  modelo.nombre = "gam", 
+  repeticiones = sp$evaluacion$parametros$repeticiones, 
+  porcentaje.evaluacion = sp$evaluacion$parametros$porcentaje.evaluacion,
+  radio.seleccion.ausencias = sp$evaluacion$parametros$radio.seleccion.ausencias
+)
 
-#contador de filas
-fila=0
 
-#EMPIEZA A EJECUTAR EL LOOP AQUÍ
-#abrimos un pdf para guardar los gráficos
-pdf("./resultados/evaluacion_modelos.pdf", width=15, height=8, pointsize=30)
+#MAXENT
+#---------------------------------------
+sp$evaluacion$maxent <- bootstrapSDM(
+  brick = variables$brick, 
+  presencias = pb, 
+  respuesta = "presencia", 
+  predictores = sp$variables.seleccionadas, 
+  formula.modelo = NULL, 
+  modelo.nombre = "maxent", 
+  repeticiones = sp$evaluacion$parametros$repeticiones, 
+  porcentaje.evaluacion = sp$evaluacion$parametros$porcentaje.evaluacion,
+  radio.seleccion.ausencias = sp$evaluacion$parametros$radio.seleccion.ausencias
+)
 
-#iteramos por cada uno de los modelos
-for (modelo in names(modelos)){
+
+#RANDOM FOREST
+#---------------------------------------
+sp$evaluacion$rf <- bootstrapSDM(
+  brick = variables$brick, 
+  presencias = pb, 
+  respuesta = "presencia", 
+  predictores = sp$variables.seleccionadas, 
+  formula.modelo = NULL, 
+  modelo.nombre = "rf", 
+  repeticiones = sp$evaluacion$parametros$repeticiones, 
+  porcentaje.evaluacion = sp$evaluacion$parametros$porcentaje.evaluacion,
+  radio.seleccion.ausencias = sp$evaluacion$parametros$radio.seleccion.ausencias,
+  mtry = 2,
+  min.node.size = 20,
+  num.trees = 5000
+)
+
+
+#¿CUAL ES EL MODELO CON MAYOR AUC?
+##################################################################################
+##################################################################################
+#para contestarla, unimos todos los dataframes "evaluacion" en una sola tabla
+sp$evaluacion$tabla.evaluacion <- do.call(
+  "rbind", 
+  purrr::map(
+    sp$evaluacion[1:length(sp$evaluacion)], 
+    "evaluacion"
+    )
+  )
+
+#a formato largo
+temp.df.long <- tidyr::gather(
+  sp$evaluacion$tabla.evaluacion , 
+  medida, 
+  valor, 
+  c("auc", "boyce")
+  )
+
+#y hacemos un boxplot con los resultados
+sp$evaluacion$boxplot <- ggplot(data = temp.df.long,
+       aes(
+         x = modelo,
+         y = valor,
+         group = modelo,
+         fill = modelo
+         )
+       ) + 
+  geom_boxplot(notch = TRUE, alpha = 0.5) +
+  viridis::scale_fill_viridis(discrete = TRUE) + 
+  theme(legend.position = "none",
+        text = element_text(size = 40),
+        axis.text = element_text(size = 40),
+        plot.margin = unit(c(2,2,2,2), "lines"),
+        panel.grid.major.x = element_line()) + 
+  coord_flip() + 
+  facet_wrap("medida", scales = "free_x") + 
+  xlab("") + 
+  ylab("")
+x11(width = 15, height = 10)
+sp$evaluacion$boxplot
+
+rm(temp.df.long)
+
+
+#CORRESPONDE AUC CON LA CAPACIDAD DEL MODELO PARA PREDECIR LA DISTRIBUCIÓN DE LA ESPECIE?
+############################################################################################
+############################################################################################
+#tenemos los bricks con los mapas, los valores de auc, y el mapa de distribución "real" de la especie virtual.
+#vamos a calcular la correlación entre cada mapa y el mapa "real" de la especie virtual
+#y comparar esos valores de correlación con AUC
+
+#creamos nuevo campo en evaluacion.auc
+sp$evaluacion$tabla.evaluacion$cor <- NA
+
+#valores de las presencias en el mapa de distribución "real"
+idoneidad.real <- as.vector(raster::extract(
+    x = sp$nicho.mapa$suitab.raster,
+    y = sp$xy
+    )
+  )
+
+#iteramos por líneas de evaluacion.auc
+#---------------------------------------
+for(i in 1:nrow(sp$evaluacion$tabla.evaluacion)){
   
-  #separamos los valores de las presencias y las ausencias
-  #fíjate como en cada iteración tomamos la columna 'modelo'
-  valores.presencias<-valores.puntos.evaluacion[valores.puntos.evaluacion$presencia==1, modelo]
-  valores.ausencias<-valores.puntos.evaluacion[valores.puntos.evaluacion$presencia==0, modelo]
+  #modelo
+  modelo <- sp$evaluacion$tabla.evaluacion[i, "modelo"]
+  id <- sp$evaluacion$tabla.evaluacion[i, "id"]
   
-  #evaluamos el modelo
-  evaluacion<-evaluate(p=valores.presencias, a=valores.ausencias)
+  #mapas a vector
+  idoneidad.predicha <- as.vector(
+    raster::extract(
+      x = sp$evaluacion[[modelo]]$mapas[[id]],
+      y = sp$xy
+      )
+    )
   
-  #suma 1 a la fila de la tabla de resultados
-  fila=fila+1
+  #calcula correlación
+  sp$evaluacion$tabla.evaluacion[i, "cor"] <- cor(
+    idoneidad.real, 
+    idoneidad.predicha
+    )
+}
+
+#dataframe temporal para hacer el plot
+temp.resultados.individuales <- tidyr::gather(
+  sp$evaluacion$tabla.evaluacion, 
+  key = evaluacion, 
+  value = evaluacion.valor, 
+  c("auc", "boyce")
+  )
+
+#aggregamos por grupo
+temp.resultados.medios <- sp$evaluacion$tabla.evaluacion %>% 
+  group_by(modelo) %>% 
+  summarise(auc = mean(auc),
+            boyce  = mean(boyce),
+            cor = mean(cor)
+            )
+temp.resultados.medios <- tidyr::gather(
+  temp.resultados.medios,
+  key = evaluacion, 
+  value = evaluacion.valor, 
+  c("auc", "boyce")
+  )
+
+#y hacemos un boxplot con los resultados
+evaluacion.auc.vs.cor <- ggplot(data = temp.resultados.individuales,
+                                 aes(
+                                   x = evaluacion.valor,
+                                   y = cor,
+                                   group = modelo,
+                                   fill = modelo
+                                 )
+                                ) + 
+  geom_point(
+    alpha = 0.3, 
+    size = 7, 
+    shape = 21
+    ) +
+  geom_point(data = temp.resultados.medios,
+    alpha = 1, 
+    size = 10, 
+    shape = 21
+  ) +
+  viridis::scale_fill_viridis(discrete = TRUE, alpha = 0.5) + 
+  theme(text = element_text(size = 40),
+        axis.text = element_text(size = 40),
+        panel.grid.major = element_line()
+        ) + 
+  facet_wrap("evaluacion", scales = "free_x")
+x11(width = 15, height = 10)
+evaluacion.auc.vs.cor
+
+
+
+#cerrando sesión
+#-------------------------
+graphics.off()
+rm(temp.resultados.individuales, temp.resultados.medios, evaluacion.auc.vs.cor, i, modelo, id, pesos, idoneidad.predicha, idoneidad.real)
+
+
+#EVALUACIÓN CON BLOQUES
+###################################################################
+###################################################################
+#vignette: http://htmlpreview.github.io/?https://github.com/rvalavi/blockCV/blob/master/vignettes/BlockCV_for_SDM.html
+#paper: https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.13107
+library(blockCV)
+
+#hay que convertir los datos de presencia a SpatialPointsDataFrame
+pb.spdf <- sp::SpatialPointsDataFrame(
+  coords = pb[, c("x", "y")], #las coordenadas
+  data = pb, #los datos
+  proj4string = raster::crs(variables$brick) #el sistema de referencia
+  )
+
+#generamos bloques
+#------------------------------
+pb.blocks <- spatialBlock(
+  speciesData = pb.spdf,
+  species = "presencia",
+  rasterLayer = variables$brick,
+  rows = 5,
+  cols = 6,
+  k = 5,
+  selection = "random",
+  maskBySpecies = TRUE
+  )
+
+#extraemos los grupos
+grupos <- pb.blocks$folds
+
+#son indices de presencias y background correspondientes con los bloques
+grupos
+length(grupos)
+
+
+#evaluación de un modelo maxnet
+#---------------------------------
+#vector para guardar valores de auc
+output.auc <- vector()
+
+#iteramos por los grupos
+for(grupo.i in 1:length(grupos)){
   
-  #llenamos la tabla
-  resultados.evaluacion[fila, "modelo"]<-modelo
-  resultados.evaluacion[fila, "auc"]<-evaluacion@auc
-  resultados.evaluacion[fila, "cor"]<-evaluacion@cor
+  #indices de los datos de entrenamiento
+  set.entrenamiento <- unlist(grupos[[grupo.i]][1])
   
-  #dibujamos el gráfico
-  #plots
-  par(mfrow=c(1,3), mar=c(2,2,4,2), oma=c(3,3,5,3))
-  density(evaluacion)
-  boxplot(evaluacion, col=c("blue", "red"))
-  plot(evaluacion, "ROC")
-  mtext(modelo, outer=TRUE, cex=1.3)
+  #indices de los datos de evaluación
+  set.evaluacion <- unlist(grupos[[grupo.i]][2])
+  
+  #ajuste del modelo
+  modelo.i <- maxnet::maxnet(
+    p = pb$presencia[set.entrenamiento], 
+    data = pb[set.entrenamiento, sp$variables.seleccionadas],
+    regmult = 1
+  )
+  
+  #predice mapa
+  mapa.i <- raster::predict(
+    object = variables$brick, 
+    model = modelo.i, 
+    type="cloglog"
+  )
+  
+  #extrae valores del modelo sobre presencias y ausencias de evaluación
+  mapa.i.valores <- data.frame(
+    presencia = pb[set.evaluacion, "presencia"],
+    idoneidad = raster::extract(
+      x = mapa.i,
+      y = pb[set.evaluacion, c("x", "y")]
+    )
+  )
+  
+  #evalúa modelo
+  evaluacion.i <- dismo::evaluate(
+    p = mapa.i.valores[mapa.i.valores$presencia == 1, "idoneidad"], 
+    a = mapa.i.valores[mapa.i.valores$presencia == 0, "idoneidad"]
+  )
+  
+  #extrae auc
+  output.auc[grupo.i] <- evaluacion.i@auc
   
 }
 
-dev.off()
-#TERMINA DE EJECUTAR EL LOOP AQUÍ
+#promedio y desviación de AUC
+mean(output.auc)
+sd(output.auc)
 
-#ORDENAMOS LA TABLA RESULTANTE
-resultados.evaluacion<-resultados.evaluacion[order(resultados.evaluacion$auc, decreasing=TRUE), ]
-resultados.evaluacion #mejor lo vemos en el panel
-
-#LA GUARDAMOS
-write.table(resultados.evaluacion, "./resultados/evaluacion_modelos.csv", row.names=FALSE, col.names=TRUE, quote=FALSE, sep=",")
-
-####################################################################################
-####################################################################################
-#APLICANDO THRESHOLDS
-####################################################################################
-####################################################################################
-
-#############################################
-#SELECCIÓN DE THRESHOLDS MEDIANTE PERCENTILES
-#(PORCENTAJES DE OMISIÓN)
-#############################################
-#PARA CALCULAR THRESHOLDS NECESITAMOS LOS VALORES DE LOS PUNTOS DE PRESENCIA Y AUSENCIA DE EVALUACIÓN SOBRE LOS MODELOS, YA LOS TENEMOS EN valores.puntos.evaluacion
-str(valores.puntos.evaluacion)
-
-#VAMOS A TRABAJAR CON SOLO UNO DE LOS MODELOS (rf_pseudoausencia)
-valores.presencias.rf.pseudoausencia<-valores.puntos.evaluacion[ , c("rf_pseudoausencia","presencia")]
-valores.presencias.rf.pseudoausencia
-
-#ELIGE UN PERCENTIL (si eliges 0.1, seleccionarás un threshold que contenga el 90% de las presencias)
-percentil=0.1
-
-#CALCULAMOS EL THRESHOLD
-umbral1<-quantile(valores.presencias.rf.pseudoausencia[valores.presencias.rf.pseudoausencia$presencia==1, "rf_pseudoausencia"], probs=percentil, na.rm=TRUE)
-umbral1
-
-#DIBUJAMOS EL MAPA (el modelo original está en el brick 'modelos')
-modelo.umbral.1<-modelos[["rf_pseudoausencia"]] > umbral1
-dev.off()
-plot(modelo.umbral.1)
-
-#NÚMERO DE CELDAS DENTRO DEL UMBRAL (COMPLETAMENTE CONTRAINTUITIVO, SEGURO QUE HAY ALGÚN MÉTODO MÁS SENCILLO...)
-suma.umbral.1<-length(Which(modelo.umbral.1, cells=TRUE))
-suma.umbral.1
+#los comparamos con el que ya tenemos
+mean(sp$evaluacion$maxent$evaluacion$auc)
+sd(sp$evaluacion$maxent$evaluacion$auc)
 
 
-##########################################################
-#SELECCIÓN DE THRESHOLD MEDIANTE TÉCNICAS DE OPTIMIZACIÓN
-##########################################################
+#cerrando sesión
+rm(evaluacion.i, grupos, mapa.i, mapa.i.valores, modelo.i, pb.blocks, pb.spdf, grupo.i, output.auc, set.entrenamiento, set.evaluacion)
 
-#TÉCNICAS DE OPTIMIZACIÓN QUE IMPLICAN A LA FUNCIÓN 'evaluate'
-#############################################################
-
-#separamos las presencias y las ausencias de valores.presencias.rf.pseudoausencia
-presencia.evaluacion<-valores.presencias.rf.pseudoausencia[valores.presencias.rf.pseudoausencia$presencia == 1 , "rf_pseudoausencia"]
-ausencia.evaluacion<-valores.presencias.rf.pseudoausencia[valores.presencias.rf.pseudoausencia$presencia == 0 , "rf_pseudoausencia"]
-
-#LA FUNCIÓN EVALUATE PERMITE CALCULAR THRESHOLDS
-#evaluamos
-evaluacion.rf.pseudoausencia<-evaluate(p=presencia.evaluacion, a=ausencia.evaluacion)
-evaluacion.rf.pseudoausencia
-#fíjate en max TPR+TNR at : umbral
-#ese valor es un threshold que maximiza la suma de clasificaciones correctas de presencias y ausencias
-#TPR: TRUE POSITIVE RATE
-#TNR: TRUE NEGATIVE RATE
-
-#¿COMO SE CALCULA A PARTIR DE LO QUE HAY EN EL OBJETO evaluacion.rf.pseudoausencia?
-umbral2<-evaluacion.rf.pseudoausencia@t[which.max(evaluacion.rf.pseudoausencia@TPR + evaluacion.rf.pseudoausencia@TNR)]
-umbral2
+#######################################################################################
+#######################################################################################
+#ENSAMBLADO DE MODELOS
+#######################################################################################
+#######################################################################################
 
 
-#TAMBIÉN PERMITE CALCULAR THRESHOLDS MAXIMIZANDO OTRAS MEDIDAS DE EVALUACIÓN
-#THRESHOLD MAXIMIZANDO KAPPA
-umbral3<-evaluacion.rf.pseudoausencia@t[which.max(evaluacion.rf.pseudoausencia@kappa)]
-umbral3
+#SIMILITUD ENTRE LOS MODELOS
+#-----------------------------------
+#transforma los modelos en dataframe eliminando nulos
+modelos.df <- na.omit(
+  raster::as.data.frame(
+    sp$modelos$mapas
+  )
+)
 
-#THRESHOLD MAXIMIZANDO CORRECT CLASSIFICATION RATE
-umbral4<-evaluacion.rf.pseudoausencia@t[which.max(evaluacion.rf.pseudoausencia@CCR)]
-umbral4
+#calcula matriz de correlaciones
+modelos.cor <- cor(modelos.df)
 
-#EN TODOS ESTOS CASOS DA EL MISMO RESULTADO, PERO NO SIEMPRE ES ASÍ
+#transforma matriz de correlación en distancias
+modelos.dis <- abs(
+  as.dist(
+    modelos.cor
+  )
+)
+
+#dibuja el árbol de correlación
+x11(width = 15, height = 10)
+plot(
+  as.dendrogram(
+    hclust(
+      1 - modelos.dis
+    )
+  ), horiz=T
+)
+
+
+
+#ENSAMBLADO MEDIANTE PROMEDIO
+#---------------------------------------
+ensamblado.media <- raster::calc(
+  x = sp$modelos$mapas, 
+  fun = mean
+)
+
+#DESVIACIÓN ESTÁNDAR
+ensamblado.desviacion <- raster::calc(
+  x = sp$modelos$mapas, 
+  fun = sd
+)
 
 #PLOT
-par(mfrow=c(2,2))
-plot(modelos[["rf_pseudoausencia"]] > umbral1, main="Solo presencia")
-plot(modelos[["rf_pseudoausencia"]] > umbral2, main="Corte presencias-ausencias")
-plot(modelos[["rf_pseudoausencia"]] > umbral3, main="max TPR+TNR")
-plot(modelos[["rf_pseudoausencia"]] > umbral4, main="max CCR")
+x11(width = 15, height = 10)
+par(mfrow=c(1,2), mar=c(1,1,1,1), oma=c(1,1,1,1))
+raster::plot(
+  ensamblado.media, 
+  main = "Media",
+  col = viridis::viridis(100)
+)
+raster::plot(
+  ensamblado.desviacion, 
+  main = "Desviación", 
+  col = viridis::viridis(100, option = "A")
+)
 
-#borramos tablas que no vamos a utilizar
-rm(presencia.ausencia.entrenamiento,presencia.ausencia.evaluacion,  presencia.entrenamiento, presencia.pseudoausencia.entrenamiento, presencia.background.entrenamiento)
+#PODEMOS FUNDIR AMBOS MAPAS
+x11(width = 15, height = 10)
+plotEnsamblado(
+  media = ensamblado.media, 
+  desviacion = ensamblado.desviacion
+)
+
+#BORRAMOS OBJETOS QUE YA NO VAMOS A USAR
+graphics.off()
+rm(ensamblado.desviacion, ensamblado.media, modelos.df, modelos.cor, modelos.dis)
 gc()
 
+
+
+#ENSAMBLANDO MEDIANTE MEDIA PONDERADA
+#---------------------------------------
+#TENEMOS LOS VALORES DE AUC POR MODELO
+#los promediamos
+auc.promedio <- sp$evaluacion$tabla.evaluacion %>% 
+  group_by(modelo) %>% 
+  summarise(auc = mean(auc))
+
+#reescalamos los valores entre 0 y 1 para que el peor modelo tenga peso 0, y el mejor tenga peso 1.
+auc.promedio$auc.w <- escalaPesos(
+  pesos = auc.promedio$auc, 
+  new.max = 1, 
+  new.min = 0, 
+  old.max = max(auc.promedio$auc), 
+  old.min = min(auc.promedio$auc)
+  )
+auc.promedio$auc.w
+
+#con esos datos podemos crear un ensamblado con media ponderada con la función raster::weighted.mean
+ensemble.ponderado <- raster::weighted.mean(
+  x = sp$modelos$mapas[[auc.promedio$modelo]], 
+  w = auc.promedio$auc.w
+  )
+x11(height = 10, width = 10)
+raster::plot(
+  ensemble.ponderado,
+  col = viridis::viridis(100, direction = -1)
+)
+
+#el AUC de este ensamblado es la media ponderada de los AUC originales y sus pesos
+ensemble.auc <- weighted.mean(
+  x = auc.promedio$auc,
+  w = auc.promedio$auc.w
+)
+ensemble.auc
+
+#guardamos el ensamblado en sp
+sp$modelos$modelos$ensamblado <- ensemble.ponderado
+sp$evaluacion$auc.ensamblado <- ensemble.auc
+
+rm(ensemble.ponderado, ensemble.auc, auc.promedio)
+
+
+#APLICANDO THRESHOLDS
+##############################################
+##############################################
+#ya vimos que la función de evaluación devuelve una columna llamada threshold
+sp$evaluacion$tabla.evaluacion
+
+#esos valores están en unidades de idoneidad, y determinan el valor de la idoneidad para el que la proporción de presencias detectadas por el modelo (TRUE POSITIVE RATE, TPR) iguala a la proporción de ausencias detectadas por el modelo (TRUE NEGATIVE RATE, TNR).
+#si calculamos la media ponderada por auc de esos valores
+threshold.promedio <- sp$evaluacion$tabla.evaluacion %>%
+  group_by(modelo) %>% 
+  summarise(threshold.medio = weighted.mean(threshold, auc)) %>% 
+  as.data.frame()
+
+#ploteamos los modelos con threshold
+x11(width = 15, height = 10)
+par(mfrow=c(2, 3))
+
+#---------------------------------------
+for(i in 1:nrow(threshold.promedio)){
+  
+  #extrae mapa y threshold
+  map <- sp$modelos$mapas[[threshold.promedio[i, "modelo"]]]
+  threshold <- threshold.promedio[i, "threshold.medio"]
+  
+  #plotea mapa
+  raster::plot(
+    map >= threshold,
+    col = viridis(2, direction = -1),
+    main = threshold.promedio[i, "modelo"],
+    )
+}
+
+rm(map, threshold.promedio, threshold, i)
 
 
 ######################################################################################
@@ -657,227 +2066,138 @@ gc()
 ######################################################################################
 ######################################################################################
 
-#CAMBIAMOS EL NOMBRE A LAS VARIABLES
-variables.eu<-variables
-
+#IMPORTAMOS LAS VARIABLES DE NORTEAMÉRICA
 ######################################################
-#IMPORTAMOS LAS VARIABLES DE PROYECCIÒN A NORTEAMÉRICA
-######################################################
-#descomprimimos las variables
-unzip("./data/3_variables_norteamerica.zip", exdir="./resultados/variables_norteamerica", junkpaths=TRUE)
+load("data/variables_norteamerica.RData")
 
-#LISTADO DE VARIABLES
-lista.variables <- list.files(path="./resultados/variables_norteamerica",pattern='*.asc', full.names=TRUE)
-#brick
-variables.na <- brick(stack(lista.variables))
-#comprobamos los nombres de las variables
-names(variables.na)
-#son muchas variables, nos quedamos con las las mismas que hay en variables.eu
-variables.na<-variables.na[[names(variables.eu)]]
 #plot
-png("./resultados/proyecciones/variables_na.png", width=3000, height=2000, pointsize=50)
-par(oma=c(3,3,4,3))
+x11(width = 15, height = 10)
 plot(variables.na)
-dev.off()
-
-#VAMOS A EXAMINAR LA SIMILITUD EN EL ESPACIO ECOLÓGICO ENTRE AMBOS SUB-CONTINENTES
-#veamos las diferencias con boxplot
-variables.eu.df<-na.omit(as.data.frame(variables.eu))
-variables.na.df<-na.omit(as.data.frame(variables.na))
-#boxplot
-par(mfrow=c(2,4))
-boxplot(variables.eu.df$bio5,variables.na.df$bio5, names=c("eu", "na"), notch=TRUE, main="bio5")
-boxplot(variables.eu.df$bio14,variables.na.df$bio14, names=c("eu", "na"), notch=TRUE, main="bio14")
-boxplot(variables.eu.df$human_footprint,variables.na.df$human_footprint, names=c("eu", "na"), notch=TRUE, main="human_footprint")
-boxplot(variables.eu.df$landcover_veg_tree,variables.na.df$landcover_veg_tree, names=c("eu", "na"), notch=TRUE, main="landcover_veg_tree")
-boxplot(variables.eu.df$ndvi_average,variables.na.df$ndvi_average, names=c("eu", "na"), notch=TRUE, main="ndvi_average")
-boxplot(variables.eu.df$ndvi_range,variables.na.df$ndvi_range, names=c("eu", "na"), notch=TRUE, main="ndvi_range")
-boxplot(variables.eu.df$diversidad_topo,variables.na.df$diversidad_topo, names=c("eu", "na"), notch=TRUE, main="diversidad_topo")
 
 
-#ANÁLISIS MESS
+#ANÁLISIS MESS (multivariate environmental similarity surfaces, Elith et al. 2010)
+#---------------------------------------
+#UNA PREGUNTA IMPORTANTE: EXISTEN LAS CONDICIONES REQUERIDAS POR LA ESPECIE EN LA REGIÓN A LA QUE VAMOS A PROYECTAR EL MODELO?
 #necesita registros de presencia con los valores de las variables, y un brick con las variables de la región de destino
-mess.na<-mess(x=variables.na, v=presencia[, names(variables.eu)], full=TRUE)
-dev.off()
-plot(mess.na)
-#no vienen los nombres en el gráfico, pero son estos
-names(mess.na)<-c(names(variables.na), "mess")
-#plot
-png("./resultados/proyecciones/mess.png", width=3000, height=2000, pointsize=50)
-par(oma=c(3,3,4,3))
-plot(mess.na)
-dev.off()
+sp$proyeccion$mess <- dismo::mess(
+  x = variables.na[[sp$variables.seleccionadas]], 
+  v = sp$presencia[, sp$variables.seleccionadas], 
+  full=TRUE
+  )
+
+#nombres para los mapas contenidos en mes
+names(sp$proyeccion$mess) <- c(sp$variables.seleccionadas, "mess")
+
+#ploteamos el resultado del análisis
+x11(width = 15, height = 10)
+raster::plot(
+  sp$proyeccion$mess, 
+  col = viridis::viridis(100, option = "A", direction = -1)
+  )
+
+#INTERPRETACIÓN: VALORES MAYORES QUE 20 Y MENORES QUE -20 INDICAN COMBINACIONES DE CONDICIONES AMBIENTALES NO REPRESENTADAS EN LAS PRESENCIAS DE ENTRENAMIENTO.
+#ploteamos el resultado
+
+#reclasificamos valores entre -20 y 20
+sp$proyeccion$mess.reclass <- raster::reclassify(
+  x = sp$proyeccion$mess,
+  rcl = matrix(c(-20, 20, 1,
+                 -Inf, -20, 0,
+                 20, Inf, 0), byrow = TRUE, ncol = 3)
+  )
+
+x11(height = 10, width = 15)
+raster::plot(
+  sp$proyeccion$mess.reclass, 
+  col = viridis::viridis(2, direction = -1)
+  )
+
+#hacemos un polígono con este mess reclass
+sp$proyeccion$mess.reclass.poligono <- rasterToPolygons(
+  sp$proyeccion$mess.reclass$mess, 
+  fun = function(x){x == 1}, 
+  dissolve = TRUE
+  )
+plot(sp$proyeccion$mess.reclass.poligono)
 
 
-#¿DONDE ESTÁ EL DESVÍO MÁXIMO DE CADA VARIABLE?
-dev.off()
-mess.na.max<-which.max(mess.na) #no funciona según la versión de R y librería Raster
-plot(mess.na.max)
+#QUÉ VARIABLE TIENE EL MESS MÁS EXTREMO EN CADA LUGAR?
+#---------------------------------------
+sp$proyeccion$mess.maximo <- raster::which.max(abs(sp$proyeccion$mess[[sp$variables.seleccionadas]]))
+sp$proyeccion$mess.maximo <- mask(sp$proyeccion$mess.maximo, mask = variables.na[[1]])
+
 #le ponemos una paleta de color más intuitiva
-library(RColorBrewer)
 #creamos una paleta con 8 colores
-paleta.color<-brewer.pal(n=8, name="Set1")
+paleta.color <- RColorBrewer::brewer.pal(
+  n = length(sp$variables.seleccionadas),
+  name = "Set1"
+  )
+
 #plot con leyenda
-png("./resultados/proyecciones/mess_limitante.png", width=1800, height=1000, pointsize=20)
-plot(mess.na.max, col=paleta.color, legend=FALSE)
-legend("bottomleft", c(names(variables.na)), pch=15, col=paleta.color, cex=1.6)
-dev.off()
+x11(width = 15, height = 10)
+raster::plot(
+  sp$proyeccion$mess.maximo, 
+  col = paleta.color, 
+  legend = FALSE
+  )
+legend(
+  "bottomleft", 
+  c(sp$variables.seleccionadas), 
+  pch = 15, 
+  col = paleta.color, 
+  cex = 1, 
+  border = ""
+  )
 
-
-#borra objetos que no vamos a necesitar
-rm(mess.na, mess.na.max, paleta.color, variables.eu.df, variables.na.df)
-gc()
-
-#AHORA QUE SABEMOS UN POCO COMO ESTÁN DISTRIBUÍDAS LAS VARIABLES EN USA, HACEMOS LOS MODELOS
-
-
-###################
-#CALIBRAMOS MODELOS
-###################
-#PRIMERO LOS CALIBRAMOS CON LAS VARIABLES Y PRESENCIAS EN EUROPA
-#USAREMOS PARA CALIBRAR LAS TABLAS QUE CONTIENEN TODOS LOS PUNTOS, ES DECIR, SON MODELOS CALIBRADOS CON TODOS LOS DATOS DISPONIBLES
-
-#PREPARAMOS LAS FÓRMULAS
-#----------------------
-formula.regresion.poly<-as.formula(paste("presencia ~ poly(", paste(names(variables.eu), collapse=", 2) + poly("), ", 2)", collapse=""))
-formula.regresion.poly
-
-
-#CALCULAMOS PESOS PARA LOS BACKGROUND PONDERADOS DE GLM Y GAM
-#------------------------------------------------------------
-pesos<-WeightPresenceBackground(presencia.background[ , "presencia"])
-
-#CALIBRAMOS MODELO
-#-----------------
-#GLM
-m.glm.backgroundw<-glm(formula.regresion.poly, family=quasibinomial(link=logit), data=presencia.background, weights=pesos)
-
-
-################################
-#PROYECTAMOS SOBRE LAS VARIABLES
-################################
-m.glm.backgroundw.map.eu<-predict(variables.eu, m.glm.backgroundw, type="response")
-m.glm.backgroundw.map.na<-predict(variables.na, m.glm.backgroundw, type="response")
-
-#plot
-par(mfrow=c(1,2))
-plot(m.glm.backgroundw.map.eu)
-plot(m.glm.backgroundw.map.na)
-
-
-#IMPORTAMOS LOS PUNTOS DE PRESENCIA PARA VERLOS SOBRE EL MODELO (TENEMOS LOS PUNTOS DE NORTEAMÉRICAEN EL FICHERO DE PRESENCIAS ORIGINAL)
-#lo descomprimimos
-unzip("./data/2_presencia_Ursus_arctos.zip", exdir="./resultados/presencia")
-#lo importamos
-presencia.na<-read.table("./resultados/presencia/occurrence.txt",header=T, sep='\t', fill=TRUE, check.names=TRUE, stringsAsFactors=FALSE)
-str(presencia.na)
-
-#LIMPIAMOS LA TABLA (MISMOS PASOS QUE EN 1_prepara_presencias.R)
-#QUITAMOS TODOS LOS REGISTROS FUERA DEL ÁREA DE TRABAJO
-presencias.sobre.variables<-data.frame(extract(x=variables.na, y=presencia.na[ , c("longitude","latitude")]))
-presencia.na<-cbind(presencia.na, presencias.sobre.variables)
-presencia.na<-presencia.na[!(is.na(presencia.na[ , names(variables.na)])), ]
-
-#QUITAMOS LOS REGISTROS FÓSILES
-presencia.na<-presencia.na[presencia.na$basis_of_record != "FOSSIL_SPECIMEN", ]
-
-#QUITAMOS REGISTROS ANTIGUOS
-presencia.na<-presencia.na[!is.na(presencia.na$year), ]
-presencia.na<-presencia.na[presencia.na$year >= 1970, ]
-
-#ELIMINAMOS REGISTROS DE BAJA RESOLUCIÓN (PUES NO, CASI NINGUNO TIENE LA RESOLUCIÓN DE LAS COORDENADAS)
-#presencia.na$coordinate_precision<-as.numeric(presencia.na$coordinate_precision)
-#presencia.na<-presencia.na[presencia.na$coordinate_precision <= 20000, ]
-
-#LIMPIEZA DE DUPLICADOS EN LAS COORDENADAS
-duplicados<-duplicated(presencia.na[ , c("latitude", "longitude")])
-length(duplicados[duplicados==TRUE])
-presencia.na<-presencia.na[!duplicados, ]
-
-#NOS QUEDAMOS SOLO CON LAS COORDENADAS
-presencia.na<-presencia.na[ , c("longitude","latitude")]
-names(presencia.na)<-c("x", "y")
-
-#PLOTEAMOS LAS PRESENCIAS SOBRE EL MAPA
-plot(m.glm.backgroundw.map.na)
-points(presencia.na, cex=0.1)
+rm(paleta.color)
 
 
 
-###################################################################################
-###################################################################################
-#PROYECCIÓN EN EL TIEMPO
-###################################################################################
-###################################################################################
+#PROYECCIÓN DE MODELOS
+#######################
+#######################
 
-#NOS QUEDAMOS SOLO CON LOS NOMBRES DE LAS VARIABLES CLIMÁTICAS QUE HEMOS UTILIZADO
-#vemos los nombres
-lista.variables<-names(variables)
-#tomamos solo los que necesitamos
-lista.variables<-c(lista.variables[[1]], lista.variables[[2]], lista.variables[[6]])
-#vemos que todo salió bien
-lista.variables
-#creamos un brick nuevo
-variables.presente<-variables[[lista.variables]]
+#solo hay que predecir sobre las variables nuevas
+maxent.na <- predict(variables.na, sp$modelos$modelos$maxent, type = "cloglog")
 
+#ploteamos la proyección
+x11(width = 30, height = 20)
+par(mfrow = c(1, 2))
+plot(
+  maxent.na, 
+  col = viridis(100, direction = -1),
+  main="Bioclim (Norte América)"
+  )
+lines(sp$proyeccion$mess.reclass.poligono) #líneas del mess
+plot(
+  sp$modelos$mapas$maxent, 
+  col = viridis(100, direction = -1), 
+  main="Bioclim (Europa)"
+  )
+#ESTAMOS EXTRAPOLANDO SOBRE COMBINACIONES NÓVELES DE LAS VARIABLES EN LA COSTA DE CANADÁ Y ALASKA!
 
-################################################
-#IMPORTAMOS LAS VARIABLES DE PROYECCIÒN TEMPORAL
-################################################
-#descomprimimos las variables
-unzip("./data/4_proyeccion_temporal.zip", exdir="./resultados/variables_proyeccion_tiempo")
+#multiplicamos el mapa proyectado por el mess reclasificado
+maxent.na <- maxent.na * sp$proyeccion$mess.reclass$mess
 
-
-#VARIABLES PALEO 21 Kyr
-########################
-lista.variables.paleo.21k <- list.files(path="./resultados/variables_proyeccion_tiempo/variables_paleo_21k",pattern='*.asc', full.names=TRUE)
-#brick
-variables.paleo.21k <- brick(stack(lista.variables.paleo.21k))
-#nos quedamos solo con las necesarias
-variables.paleo.21k<-variables.paleo.21k[[lista.variables]]
-
-
-#VARIABLES FUTURO
-#################
-lista.variables.futuro <- list.files(path="./resultados/variables_proyeccion_tiempo/variables_futuro_ccsm_A1B",pattern='*.asc', full.names=TRUE)
-#brick
-variables.futuro <- brick(stack(lista.variables.futuro))
-#nos quedamos solo con las necesarias
-variables.futuro<-variables.futuro[[lista.variables]]
-
-#ENTRENAMIENTO DEL MODELO
-#############################
-
-#PREPARAMOS LAS FÓRMULAS (SOLO LAS TRES VARIABLES CLIMÁTICAS)
-formula.regresion.poly<-as.formula(paste("presencia ~ poly(", paste(names(variables.presente), collapse=", 2) + poly("), ", 2)", collapse=""))
-formula.regresion.poly
-
-#CALCULAMOS PESOS PARA LOS BACKGROUND PONDERADOS DE GLM Y GAM
-pesos<-WeightPresenceBackground(presence.column=presencia.background[ , "presencia"])
-
-#CALIBRAMOS EL MODELO
-m.glm<-glm(formula.regresion.poly, family=quasibinomial(link=logit), data=presencia.background, weights=pesos)
-
-#VEMOS CARACTERÍSTICAS DEL MODELO
-summary(m.glm)
-Dsquared(m.glm)
-plotmo(m.glm, all2=TRUE, level=0.68)
-
-#PROYECTAMOS SOBRE LAS VARIABLES DEL PRESENTE
-m.glm.map.presente<-predict(variables.presente, m.glm, type="response")
-
-#PROYECTAMOS SOBRE LAS VARIABLES DEL 21k
-m.glm.map.paleo.21k<-predict(variables.paleo.21k, m.glm, type="response")
-
-#PROYECTAMOS SOBRE LAS VARIABLES DEL FUTURO CSIRO
-m.glm.map.futuro<-predict(variables.futuro, m.glm, type="response")
+#ploteamos de nuevo
+x11(width = 15, height = 10)
+par(mfrow = c(1, 2))
+plot(
+  maxent.na, 
+  col = viridis(100, direction = -1),
+  main="Bioclim (Norte América)"
+)
+lines(sp$proyeccion$mess.reclass.poligono)
+plot(
+  sp$modelos$mapas$maxent, 
+  col = viridis(100, direction = -1), 
+  main="Bioclim (Europa)"
+)
 
 
-#PLOTEAMOS LOS MODELOS
-######################
-par(mfrow=c(1,3), mar=c(1,1,1,1), oma=c(3,3,4,3))
-#glm
-plot(m.glm.map.paleo.21k, main="GLM - 21 kyr BP")
-plot(m.glm.map.presente, main="GLM - Present")
-plot(m.glm.map.futuro, main="GLM - 2060")
+#cerrando sección
+#---------------------------
+graphics.off()
+rm(maxent.na)
+
 
