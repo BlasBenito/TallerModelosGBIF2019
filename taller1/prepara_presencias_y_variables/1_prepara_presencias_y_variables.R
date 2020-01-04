@@ -1,14 +1,10 @@
 
 # 1 INSTALACIÓN Y CARGA DE PAQUETES -----------------------------------------
-#NOTA: SOLO ES NECESARIO INSTALARLOS UNA VEZ. DESACTIVA ESTAS LÍNEAS PARA LA PRÓXIMA SESIÓN
-#INSTALA PAQUETE DISMO Y TODAS SUS DEPENDENCIAS (EJECUTAR UNA SOLA VEZ)
-#install.packages(c("rgeos", "HH", "rgbif", "sf", "magrittr", "gistr", "leaflet", "ALA4R", "ape", "geosphere", "ggdendro"), dep=TRUE)
-
-#AJUSTA LA CARPETA DE TRABAJO A LA LOCALIZACIÓN DE ESTE SCRIPT
-setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+#NOTA: solo es necesario instalarlos una vez!
+#install.packages(c("rgeos", "HH", "rgbif", "sf", "magrittr", "gistr", "leaflet", "ALA4R", "ape", "geosphere", "ggdendro", "here"), dep=TRUE)
 
 
-#CARGA LAS LIBRERIAS NECESARIAS (EJECUTAR SIEMPRE QUE TRABAJES CON EL SCRIPT)
+#carga librerías
 library(ggplot2)
 library(cowplot)
 theme_set(theme_cowplot())
@@ -17,28 +13,29 @@ library(leaflet)
 library(dplyr)
 library(raster)
 library(SDMworkshop)
+library(here)
 source("funciones.R")
+here::here()
 
 
 # 2 PREPARACIÓN DE LAS PRESENCIAS -------------------------------------------
 
 # * 2.1 Importa variables predictivas ---------------------------------------
 
-#descromprime variables
+#descromprime mapas ratser al directorio variables
 unzip("./1_variables.zip", exdir="./variables", junkpaths=TRUE)
-#ahora todas las variables están en el directorio variables
 
 #lista para guardar la info relacionada con las variables
 variables <- list()
 
-#IMPORTANDO LOS FICHEROS .asc
+#importando ficheros raster .asc
 variables$brick <- SDMworkshop::importASC(
   folder = "variables",
   crs = "+init=epsg:4326",
   to.memory = TRUE
 )
 
-#RESOLUCION DE LAS VARIABLES
+#viendo resolución de las variables
 variables$resolucion.km <- raster::xres(variables$brick)*111.19
 variables$resolucion.km
 
@@ -46,6 +43,7 @@ variables$resolucion.km
 plotVariable(brick = variables$brick, variable = "bio1")
 
 #plotea todas
+x11()
 plot(
   variables$brick,
   maxnl = length(names(variables$brick)),
@@ -53,13 +51,13 @@ plot(
 )
 
 #TRANSFORMA LOS MAPAS EN UNA TABLA
-# variables$df <- na.omit(
-#   raster::as.data.frame(
-#     variables$brick
-#     )
-#   )
+variables$df <- na.omit(
+  raster::as.data.frame(
+    variables$brick
+    )
+  )
 
-#NOMBRES DE LAS VARIABLES
+#nombres de las variables
 variables$names <- names(variables$brick)
 variables$names
 
@@ -149,7 +147,7 @@ especie.virtual <- makeVirtualSpecies(
 names(especie.virtual)
 especie.virtual$niche.dimensions
 especie.virtual$niche.parameters
-plot(especie.virtual$suitability.raster)
+plot(especie.virtual$suitability.raster, col = viridis::viridis(100, direction = -1))
 especie.virtual$observed.presence
 
 #añadimos esos objetos a sp
@@ -165,13 +163,9 @@ SDMworkshop::plotRaster(
   points.size = 5
 )
 
-#NOTA: fíjate que la función virtualspecies::sampleOccurrences solo genera un punto por celda
 
 
-
-#DESCARGANDO PRESENCIAS DE GBIF CON rgbif
-#########################################
-#########################################
+# * BONUS: Descarga de presencias de GBIF ----------------------------------
 #tutorial: https://ropensci.org/tutorials/rgbif_tutorial/
 
 #miramos la taxonomía de un nombre de un género
@@ -195,7 +189,7 @@ area.wkt <-
 area.wkt
 #IMPORTANTE: las coordenadas deben ir en contra de las agujas del reloj (así GBIF las interpreta como polígono)
 
-#downloading data
+#descargando los datos
 tilia <- rgbif::occ_search(
   taxonKey = taxon$key[1],
   return = "data",
@@ -227,15 +221,13 @@ plotPresencia(
 )
 
 #NOTA: haz zoom, y verás que en a veces hay varios puntos por cuadrícula. Guarda este detalle para luego
-
 rm(taxon)
 
 
 
-#DESCARGANDO PRESENCIAS CON ALA4R
-#########################################
-#########################################
-#ALGUNOS RECURSOS
+# * BONUS: Descarga de presencias con ALA4R ----------------------------------
+
+#recursos:
 # https://cran.r-project.org/web/packages/ALA4R/vignettes/ALA4R.html
 # https://www.ala.org.au/faq/spatial-portal/spatial-portal-case-studies/ala4r/
 
@@ -276,12 +268,7 @@ rm(taxon, area.wkt)
 
 
 
-
-#######################################
-#######################################
-#AUTOCORRELACIÓN ESPACIAL
-#######################################
-#######################################
+# * 2.3 Autocorrelación espacial ----------------------------------
 #"Everything is related to everything else, but near things are more related than distant things."
 
 #hay zonas en las que los puntos están muy agregados
@@ -602,9 +589,9 @@ sp$variables.uso.disponibilidad <- plotUsoDisponibilidad(
 #BISERIAL CORRELATION es la correlación entre una variable binaria (presencia con sus unos y ceros) y una variable contínua (cualquiera de las variables)
 #Pendientes positivas o negativas indican que las medias de las presencias y las ausencias son distintas para una variable dada
 #guardamos el resultado directamente en la especie virtual
-sp$variables.biserial.correlation <- biserialCorrelation(
-  presencias = rbind(sp$presencia, sp$background),
-  presencia = "presencia",
+sp$variables.biserial.correlation <- SDMworkshop::corPB(
+  x = rbind(sp$presencia, sp$background),
+  presence.column = "presencia",
   variables = names(variables$brick)
 )
 #la función devuelve el plot y un dataframe
