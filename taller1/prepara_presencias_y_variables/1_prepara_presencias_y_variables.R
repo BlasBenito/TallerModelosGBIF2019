@@ -1,6 +1,5 @@
-################################
-#INSTALACION Y CARGA DE PAQUETES
-################################
+
+# 1 INSTALACIÓN Y CARGA DE PAQUETES -----------------------------------------
 #NOTA: SOLO ES NECESARIO INSTALARLOS UNA VEZ. DESACTIVA ESTAS LÍNEAS PARA LA PRÓXIMA SESIÓN
 #INSTALA PAQUETE DISMO Y TODAS SUS DEPENDENCIAS (EJECUTAR UNA SOLA VEZ)
 #install.packages(c("rgeos", "HH", "rgbif", "sf", "magrittr", "gistr", "leaflet", "ALA4R", "ape", "geosphere", "ggdendro"), dep=TRUE)
@@ -17,58 +16,52 @@ library(magrittr)
 library(leaflet)
 library(dplyr)
 library(raster)
+library(SDMworkshop)
 source("funciones.R")
 
 
+# 2 PREPARACIÓN DE LAS PRESENCIAS -------------------------------------------
 
+# * 2.1 Importa variables predictivas ---------------------------------------
 
-################################################################
-################################################################
-#PREPARACIÓN DE PRESENCIAS
-################################################################
-################################################################
-
-
-#IMPORTA LAS VARIABLES PREDICTORAS A UN BRICK
-#############################################
-#DESCOMPRIME LAS VARIABLES
+#descromprime variables
 unzip("./1_variables.zip", exdir="./variables", junkpaths=TRUE)
 #ahora todas las variables están en el directorio variables
 
-#LISTA PARA GUARDAR RESULTADOS
+#lista para guardar la info relacionada con las variables
 variables <- list()
 
-#LISTADO DE VARIABLES
-variables$path <- list.files(path="./variables",pattern='*.asc', full.names=TRUE)
-variables$path
-
-#stack Y brick PREPARAN LAS VARIABLES EN UN UNICO OBJETO ESPACIAL
-variables$brick <- raster::brick(
-  raster::stack(
-    variables$path
-    )
-  )
-names(variables$brick)
-
-#dándoles un sistema de referencia
-raster::crs(variables$brick) <- sp::CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs")
+#IMPORTANDO LOS FICHEROS .asc
+variables$brick <- SDMworkshop::importASC(
+  folder = "variables",
+  crs = "+init=epsg:4326",
+  to.memory = TRUE
+)
 
 #RESOLUCION DE LAS VARIABLES
-variables$resolucion.km <- xres(variables$brick)*111.19
+variables$resolucion.km <- raster::xres(variables$brick)*111.19
+variables$resolucion.km
 
-#DIBUJA LAS VARIABLES PREDICTORAS
-#con leaflet
+#plotea una variable
 plotVariable(brick = variables$brick, variable = "bio1")
 
+#plotea todas
+plot(
+  variables$brick,
+  maxnl = length(names(variables$brick)),
+  col = viridis::viridis(100)
+)
+
 #TRANSFORMA LOS MAPAS EN UNA TABLA
-variables$df <- na.omit(
-  raster::as.data.frame(
-    variables$brick
-    )
-  )
+# variables$df <- na.omit(
+#   raster::as.data.frame(
+#     variables$brick
+#     )
+#   )
 
 #NOMBRES DE LAS VARIABLES
-variables$names <- names(variables$df)
+variables$names <- names(variables$brick)
+variables$names
 
 # bio1 = Annual Mean Temperature
 # bio2 = Mean Diurnal Range (Mean of monthly (max temp - min temp))
@@ -106,15 +99,13 @@ variables$names <- names(variables$df)
 
 
 
-#CREACIÓN DE UNA ESPECIE VIRTUAL
-################################
-################################
+# * 2.2 Preparación de una especie virtual ----------------------------------
 
 #vamos a diseñar una especie con un nicho ecológico basado en estas variables
-#bio5 - temperatura del mes más cálido 
+#bio5 - temperatura del mes más cálido
 #bio6 - temperatura del mes más frío
-#bio12 - precipitación anual 
-#topo_slope - pendiente 
+#bio12 - precipitación anual
+#topo_slope - pendiente
 #landcover_veg_herb - % de cobertura herbácea
 #human_footprint - huella humana
 
@@ -123,49 +114,55 @@ sp <- list()
 
 #niche dimensions
 sp$nicho.dimensiones <- c(
-  "bio12", 
-  "bio5", 
-  "bio6", 
-  "human_footprint", 
+  "bio12",
+  "bio5",
+  "bio6",
+  "human_footprint",
   "topo_slope",
   "landcover_veg_herb"
-  )
+)
 
 #vemos las estadísticas de esas variables
 #estadística descriptiva de las variables
 summary(variables$df[, sp$nicho.dimensiones])
 
 #descripción del nicho ecológico
+#el primer número es la media de una distribución normal (nicho óptimo)
+#el segundo número es la desviación estándar de la distribución normal (amplitud de nicho)
 sp$nicho.parametros <- list(
-bio12 = c(500, 250),
-bio5 = c(240, 50),
-bio6 = c(10, 30),
-human_footprint = c(0, 30),
-topo_slope = c(0, 2),
-landcover_veg_herb = c(100, 35)
+  bio12 = c(500, 250),
+  bio5 = c(240, 50),
+  bio6 = c(10, 30),
+  human_footprint = c(0, 30),
+  topo_slope = c(0, 2),
+  landcover_veg_herb = c(100, 35)
 )
 
-#generar especie virtual con ese nicho
-sp$nicho.mapa <- generaEspecieVirtual(
-  variables.brick = variables$brick,
-  nicho = sp$nicho.parametros,
-  prevalencia = 0.05
+#genera la especie virtual
+especie.virtual <- makeVirtualSpecies(
+  variables = variables$brick,
+  niche.parameters = sp$nicho.parametros,
+  max.n = 200
 )
-#nota: el plot está guardado en sp$nicho.mapa$nicho.plot
 
-#muestrear presencias
-sp$xy <- sampleOccurrences(
-  sp$nicho.mapa, 
-  n = 300,
-  type = "presence only"
-  )$sample.points[c("x", "y")] #tomamos solo la x y la y
+#qué hay dentro de especie.virtual?
+names(especie.virtual)
+especie.virtual$niche.dimensions
+especie.virtual$niche.parameters
+plot(especie.virtual$suitability.raster)
+especie.virtual$observed.presence
+
+#añadimos esos objetos a sp
+sp$suitability.raster <- especie.virtual$suitability.raster
+sp$xy <- especie.virtual$observed.presence
+rm(especie.virtual)
 
 #ploteamos presencias
-plotPresencia(
-  brick = variables$brick, 
-  variable = "human_footprint", 
-  lon = sp$xy$x,
-  lat = sp$xy$y
+SDMworkshop::plotRaster(
+  x = variables$brick[["human_footprint"]],
+  points.x = sp$xy$x,
+  points.y = sp$xy$y,
+  points.size = 5
 )
 
 #NOTA: fíjate que la función virtualspecies::sampleOccurrences solo genera un punto por celda
@@ -187,11 +184,11 @@ taxon <- rgbif::name_suggest(q = "Tilia tomentosa")
 rgbif::occ_count(
   taxonKey = taxon$key[1], #primera especie
   georeferenced = TRUE
-  )
+)
 
 #acotamos la descarga a nuestro área de trabajo
 #creando un polígono que usa las variables como referencia
-area.wkt <- 
+area.wkt <-
   sf::st_bbox(variables$brick) %>% #extension
   sf::st_as_sfc() %>% #geometría
   sf::st_as_text() #texto
@@ -200,9 +197,9 @@ area.wkt
 
 #downloading data
 tilia <- rgbif::occ_search(
-  taxonKey = taxon$key[1], 
-  return = "data", 
-  hasCoordinate = TRUE, 
+  taxonKey = taxon$key[1],
+  return = "data",
+  hasCoordinate = TRUE,
   geometry = area.wkt,
   fields = c(
     "acceptedScientificName",
@@ -213,7 +210,7 @@ tilia <- rgbif::occ_search(
     "taxonkey",
     "year",
     "country")
-  )
+)
 
 #comprobamos si hay duplicados en coordenadas
 sum(duplicated(tilia[, c("decimalLatitude", "decimalLongitude")]))
@@ -223,11 +220,11 @@ tilia <- tilia[!duplicated(tilia[, c("decimalLatitude", "decimalLongitude")]),]
 
 #ploteamos presencias
 plotPresencia(
-  brick = variables$brick, 
-  variable = "human_footprint", 
-  lon = tilia$decimalLongitude, 
+  brick = variables$brick,
+  variable = "human_footprint",
+  lon = tilia$decimalLongitude,
   lat = tilia$decimalLatitude
-  )
+)
 
 #NOTA: haz zoom, y verás que en a veces hay varios puntos por cuadrícula. Guarda este detalle para luego
 
@@ -261,16 +258,16 @@ presencia <- occurrences(
   wkt = area.wkt,
   qa = "none",
   download_reason_id = "testing"
-  )$data
+)$data
 
 #filtramos las que tienen rank == genus
 presencia <- presencia[presencia$rank == "species" & presencia$genus == "Tilia", ]
 
 #ploteamos
 plotPresencia(
-  brick = variables$brick, 
-  variable = "human_footprint", 
-  lon = presencia$longitude, 
+  brick = variables$brick,
+  variable = "human_footprint",
+  lon = presencia$longitude,
   lat = presencia$latitude,
   group = presencia$scientificName
 )
@@ -295,22 +292,22 @@ rm(taxon, area.wkt)
 #creamos un dataframe nuevo más simple para Tilia
 #solo las columnas "x" e "y"
 xy <- tilia[, c("decimalLongitude", "decimalLatitude")]
-colnames(xy) <- c("x", "y") 
+colnames(xy) <- c("x", "y")
 
 #vamos a darle un vistazo a los puntos de presencia de Tilia
 plotPresencia(
-  brick = variables$brick, 
-  variable = "human_footprint", 
-  lon = xy$x, 
+  brick = variables$brick,
+  variable = "human_footprint",
+  lon = xy$x,
   lat = xy$y
 )
 
 #función para calcular autocorrelación
 #se basa en la función ape::Moran.I()
 xy.moran <- autocor(
-  brick = variables$brick, 
+  brick = variables$brick,
   xy = xy
-  )
+)
 xy.moran
 #si observed es mayor que 0 y p.value es menor de 0.05, se considera que hay autocorrelación espacial
 
@@ -322,22 +319,22 @@ xy.thin <- thinning(
   xy = xy,
   brick = variables$brick,
   separacion = 5 #celdas entre puntos cercanos
-  )
+)
 #NOTA: esta función conserva los puntos que tiene valores extremos para cualquiera de las variables (para conservar los extremos del nicho ecológico de la especie). Esos puntos no cumplen necesariamente la regla de distancia mínima
 
 #NOTA: el paquete spThin (URL: https://cran.r-project.org/web/packages/spThin) también hace thinning para modelos de distribución.
 
 #vemos las presencias de nevo
 plotPresencia(
-  brick = variables$brick, 
-  variable = "human_footprint", 
-  lon = xy.thin$x, 
+  brick = variables$brick,
+  variable = "human_footprint",
+  lon = xy.thin$x,
   lat = xy.thin$y
 )
 
 #calculamos autocorrelacion otra vez
 xy.moran <- autocor(
-  brick = variables$brick, 
+  brick = variables$brick,
   xy = xy.thin
 )
 xy.moran
@@ -397,13 +394,13 @@ for(variable in names(variables$df)){
 
   #buscamos las coordenadas de la celda con el menor valor
   xy.min <- raster::xyFromCell(object = variables$brick,
-                     cell = raster::which.min(variables$brick[[variable]])[1]
-                     )
+                               cell = raster::which.min(variables$brick[[variable]])[1]
+  )
   #buscamos las coordenadas de la celda con el mayor valor
   xy.max <- raster::xyFromCell(object = variables$brick,
-                     cell = raster::which.max(variables$brick[[variable]])[1]
-                     )
-  
+                               cell = raster::which.max(variables$brick[[variable]])[1]
+  )
+
   #las unimos al background
   background <- rbind(background, xy.min, xy.max)
 }
@@ -442,11 +439,11 @@ rm(background, xy.max, xy.min, variable)
 #############################
 #background limitado a las zonas a las que la especie puede acceder mediante migración
 background.restringido <- backgroundRestringido(
-  xy = sp$xy, 
-  brick = variables$brick, 
+  xy = sp$xy,
+  brick = variables$brick,
   buffer.km = 200, #máxima distancia migratoria
   percent = 2 #porcentaje de área muestreada
-  )
+)
 
 #vemos el background
 plotPresencia(
@@ -481,18 +478,18 @@ rm(background.restringido)
 #sin embargo, queremos el doble de pseudo-ausencias como presencias hay en sp$xy, de ahí n=nrow(sp$xy)
 pseudoausencia <- data.frame(
   randomPoints(
-    mask = variables$brick, 
+    mask = variables$brick,
     n = nrow(sp$xy) * 2, #doble del número de presencias
     p = sp$xy, #puntos a excluir
     excludep = TRUE #excluir p
-    )
   )
+)
 
 #buscamos los casos que contienen los extremos de cada una de las variables
 ########################################################################
 #iteramos por cada variable
 for(variable in names(variables$df)){
-  
+
   #buscamos las coordenadas de la celda con el menor valor
   xy.min <- raster::xyFromCell(object = variables$brick,
                                cell = raster::which.min(variables$brick[[variable]])[1]
@@ -501,14 +498,14 @@ for(variable in names(variables$df)){
   xy.max <- raster::xyFromCell(object = variables$brick,
                                cell = raster::which.max(variables$brick[[variable]])[1]
   )
-  
+
   #las unimos al background
   pseudoausencia <- rbind(pseudoausencia, xy.min, xy.max)
 }
 
 #eliminamos duplicados
 pseudoausencia <- pseudoausencia[!duplicated(pseudoausencia), ]
-  
+
 #vemos las pseudoausencias
 plotPresencia(
   brick = variables$brick,
@@ -541,12 +538,12 @@ rm(pseudoausencia, xy.min, xy.max, variable)
 ########################
 #NO TENEMOS AUSENCIAS REALES (EN GBIF NO SUELE HABERLAS), PERO VAMOS A SIMULAR UN CONJUNTO DE AUSENCIAS, COMO SI HUBIÉRAMOS REALIZADO MUESTREOS ALREDEDOR DE LAS ZONAS DE PRESENCIA
 ausencia <- simulaAusencia(
-  xy = sp$xy, 
-  brick = variables$brick, 
+  xy = sp$xy,
+  brick = variables$brick,
   pob.muestreadas = 60, #porcentaje de poblaciones muestreadas
   buffer.km = 100, #distancia máxima desde poblaciones muestreadas
   distancia.thinning = 4 #separación de las ausencias en número de celdas
-  )
+)
 
 #vemos las ausencias con las presencias
 plotPresencia(
@@ -555,9 +552,9 @@ plotPresencia(
   lon = c(sp$xy$x, ausencia$x),
   lat = c(sp$xy$y, ausencia$y),
   group = c(
-    rep("presencia", nrow(sp$xy)), 
+    rep("presencia", nrow(sp$xy)),
     rep("ausencia", nrow(ausencia))
-    )
+  )
 )
 
 #le añadimos los valores de las variables
@@ -594,10 +591,10 @@ rm(ausencia)
 #1. CURVAS DE USO VS DISPONIBILIDAD
 ###################################################
 sp$variables.uso.disponibilidad <- plotUsoDisponibilidad(
-  presencias = rbind(sp$presencia, sp$background), 
+  presencias = rbind(sp$presencia, sp$background),
   presencia = "presencia",
   variables = names(variables$brick)
-  )
+)
 
 
 #2. POINT BISERIAL CORRELATION
@@ -607,9 +604,9 @@ sp$variables.uso.disponibilidad <- plotUsoDisponibilidad(
 #guardamos el resultado directamente en la especie virtual
 sp$variables.biserial.correlation <- biserialCorrelation(
   presencias = rbind(sp$presencia, sp$background),
-  presencia = "presencia", 
+  presencia = "presencia",
   variables = names(variables$brick)
-  )
+)
 #la función devuelve el plot y un dataframe
 #sp$biserial.correlation$plot
 #sp$biserial.correlation$df
@@ -622,7 +619,7 @@ correlacion.variables <- dendrogramaCorrelacion(
   biserial.correlation = sp$variables.biserial.correlation$df,
   seleccion.automatica = TRUE,
   correlacion.maxima = 0.50
-  )
+)
 
 #si seleccion.automatica = TRUE, devuelve una lista con dos slots
 correlacion.variables$variables.dendrograma
