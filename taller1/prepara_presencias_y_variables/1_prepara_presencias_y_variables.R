@@ -137,7 +137,7 @@ sp$nicho.parametros <- list(
 )
 
 #genera la especie virtual
-especie.virtual <- makeVirtualSpecies(
+especie.virtual <- SDMworkshop::makeVirtualSpecies(
   variables = variables$brick,
   niche.parameters = sp$nicho.parametros,
   max.n = 200
@@ -182,8 +182,10 @@ rgbif::occ_count(
 
 #acotamos la descarga a nuestro área de trabajo
 #creando un polígono que usa las variables como referencia
+#NOTA: si esta línea da problemas:
+#raster::crs(variables$brick) <- NA
 area.wkt <-
-  sf::st_bbox(variables$brick) %>% #extension
+  sf::st_bbox(variables$brick, crs = sf::st_crs(4326)) %>% #extension
   sf::st_as_sfc() %>% #geometría
   sf::st_as_text() #texto
 area.wkt
@@ -213,15 +215,15 @@ sum(duplicated(tilia[, c("decimalLatitude", "decimalLongitude")]))
 tilia <- tilia[!duplicated(tilia[, c("decimalLatitude", "decimalLongitude")]),]
 
 #ploteamos presencias
-plotPresencia(
-  brick = variables$brick,
-  variable = "human_footprint",
-  lon = tilia$decimalLongitude,
-  lat = tilia$decimalLatitude
+#NOTA: si esta línea da problemas:
+#raster::crs(variables$brick) <- "+init=epsg:4326"
+SDMworkshop::plotRaster(
+  x = variables$brick[["human_footprint"]],
+  points.x = tilia$decimalLongitude,
+  points.y = tilia$decimalLatitude
 )
 
 #NOTA: haz zoom, y verás que en a veces hay varios puntos por cuadrícula. Guarda este detalle para luego
-rm(taxon)
 
 
 
@@ -245,7 +247,7 @@ configuraALA4R()
 taxon <- search_fulltext("Tilia")$data
 
 #descargar información de presencia
-presencia <- occurrences(
+presencia <- ALA4R::occurrences(
   taxon = "Tilia tomentosa",
   wkt = area.wkt,
   qa = "none",
@@ -282,18 +284,17 @@ xy <- tilia[, c("decimalLongitude", "decimalLatitude")]
 colnames(xy) <- c("x", "y")
 
 #vamos a darle un vistazo a los puntos de presencia de Tilia
-plotPresencia(
-  brick = variables$brick,
-  variable = "human_footprint",
-  lon = xy$x,
-  lat = xy$y
+plotRaster(
+  x = variables$brick[["human_footprint"]],
+  points.x = xy$x,
+  points.y = xy$y
 )
 
 #función para calcular autocorrelación
 #se basa en la función ape::Moran.I()
-xy.moran <- autocor(
-  brick = variables$brick,
-  xy = xy
+xy.moran <- SDMworkshop::testSpatialCorrelation(
+  xy = xy,
+  variables = variables$brick,
 )
 xy.moran
 #si observed es mayor que 0 y p.value es menor de 0.05, se considera que hay autocorrelación espacial
@@ -302,10 +303,10 @@ xy.moran
 
 #THINNING (nombre en inglés de lo que vamos a hacer)
 #aplicar thinning a un conjunto de datos de presencia implica incrementar la distancia media entre puntos eliminando aquellos que son redundantes.
-xy.thin <- thinning(
+xy.thin <- SDMworkshop::reduceSpatialCorrelation(
   xy = xy,
-  brick = variables$brick,
-  separacion = 5 #celdas entre puntos cercanos
+  variables = variables$brick,
+  minimum.distance = 0.83 #distancia a imponer entre puntos adyacentes
 )
 #NOTA: esta función conserva los puntos que tiene valores extremos para cualquiera de las variables (para conservar los extremos del nicho ecológico de la especie). Esos puntos no cumplen necesariamente la regla de distancia mínima
 
