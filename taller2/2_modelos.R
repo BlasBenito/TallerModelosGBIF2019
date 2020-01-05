@@ -30,7 +30,7 @@ pb <- rbind(
 
 #Nota: para calibrar GLMs con background necesitamos ponderar las presencias y los puntos de background en función de su número.
 #Como hay muchos más puntos de background (ceros) que de presencias, el modelo dará mucha más importancia al background. Añadir pesos (weights) al modelo soluciona este problema.
-pb.w <- weightCases(presence = pb$presencia)
+pb.w <- SDMworkshop::weightPB(x = pb$presencia)
 
 #presencia y pseudoausencias
 pp <- rbind(
