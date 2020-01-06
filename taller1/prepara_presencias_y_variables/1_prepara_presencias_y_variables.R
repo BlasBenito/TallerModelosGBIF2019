@@ -156,8 +156,8 @@ sp$xy <- especie.virtual$observed.presence
 rm(especie.virtual)
 
 #ploteamos presencias
-SDMworkshop::plotRaster(
-  x = variables$brick[["human_footprint"]],
+SDMworkshop::plotVariable(
+  variable = variables$brick[["human_footprint"]],
   points.x = sp$xy$x,
   points.y = sp$xy$y,
   points.size = 5
@@ -217,8 +217,8 @@ tilia <- tilia[!duplicated(tilia[, c("decimalLatitude", "decimalLongitude")]),]
 #ploteamos presencias
 #NOTA: si esta línea da problemas:
 #raster::crs(variables$brick) <- "+init=epsg:4326"
-SDMworkshop::plotRaster(
-  x = variables$brick[["human_footprint"]],
+SDMworkshop::plotVariable(
+  variable = variables$brick[["human_footprint"]],
   points.x = tilia$decimalLongitude,
   points.y = tilia$decimalLatitude
 )
@@ -258,12 +258,10 @@ presencia <- ALA4R::occurrences(
 presencia <- presencia[presencia$rank == "species" & presencia$genus == "Tilia", ]
 
 #ploteamos
-plotPresencia(
-  brick = variables$brick,
-  variable = "human_footprint",
-  lon = presencia$longitude,
-  lat = presencia$latitude,
-  group = presencia$scientificName
+SDMworkshop::plotVariable(
+  variable = variables$brick[["human_footprint"]],
+  points.x = presencia$longitude,
+  points.y = presencia$latitude
 )
 
 rm(taxon, area.wkt)
@@ -273,62 +271,53 @@ rm(taxon, area.wkt)
 # * 2.3 Autocorrelación espacial ----------------------------------
 #"Everything is related to everything else, but near things are more related than distant things."
 
-#hay zonas en las que los puntos están muy agregados
-#probablemente hay mucha autocorrelación espacial entre grupos de puntos debido a sesgo en el muestreo
-#puntos agregados artificialmente debido a muestreo poco homogéneo añade bias a las estimaciones del nicho ecológico
-#vamos a reducir la autocorrelación espacial de los puntos de Tilia
-
 #creamos un dataframe nuevo más simple para Tilia
 #solo las columnas "x" e "y"
 xy <- tilia[, c("decimalLongitude", "decimalLatitude")]
 colnames(xy) <- c("x", "y")
 
 #vamos a darle un vistazo a los puntos de presencia de Tilia
-plotRaster(
-  x = variables$brick[["human_footprint"]],
+SDMworkshop::plotVariable(
+  variable = variables$brick[["human_footprint"]],
   points.x = xy$x,
   points.y = xy$y
 )
 
-#función para calcular autocorrelación
-#se basa en la función ape::Moran.I()
+#hay zonas en las que los puntos están muy agregados
+#probablemente hay mucha autocorrelación espacial entre grupos de puntos debido a sesgo en el muestreo
+#puntos agregados artificialmente debido a muestreo poco homogéneo añade bias a las estimaciones del nicho ecológico
 xy.moran <- SDMworkshop::testSpatialCorrelation(
   xy = xy,
-  variables = variables$brick,
+  variables = variables$brick
 )
 xy.moran
-#si observed es mayor que 0 y p.value es menor de 0.05, se considera que hay autocorrelación espacial
-
+#si observed es mayor que 0 y p.value es menor de 0.05, se considera que hay autocorrelación espacial significativa
 #según este resultado, todas las variables presentan una autocorrelación significativa
 
 #THINNING (nombre en inglés de lo que vamos a hacer)
+#NOTA: el paquete spThin (URL: https://cran.r-project.org/web/packages/spThin) también hace thinning para modelos de distribución.
 #aplicar thinning a un conjunto de datos de presencia implica incrementar la distancia media entre puntos eliminando aquellos que son redundantes.
 xy.thin <- SDMworkshop::reduceSpatialCorrelation(
   xy = xy,
   variables = variables$brick,
-  minimum.distance = 0.83 #distancia a imponer entre puntos adyacentes
+  minimum.distance = 1 #distancia a imponer entre puntos adyacentes, 1 grado
 )
 #NOTA: esta función conserva los puntos que tiene valores extremos para cualquiera de las variables (para conservar los extremos del nicho ecológico de la especie). Esos puntos no cumplen necesariamente la regla de distancia mínima
-
-#NOTA: el paquete spThin (URL: https://cran.r-project.org/web/packages/spThin) también hace thinning para modelos de distribución.
-
-#vemos las presencias de nevo
-plotPresencia(
-  brick = variables$brick,
-  variable = "human_footprint",
-  lon = xy.thin$x,
-  lat = xy.thin$y
+SDMworkshop::plotVariable(
+  variable = variables$brick[["human_footprint"]],
+  points.x = xy.thin$x,
+  points.y = xy.thin$y
 )
 
-#calculamos autocorrelacion otra vez
-xy.moran <- autocor(
-  brick = variables$brick,
-  xy = xy.thin
+#vemos que ahora hay menos correlación espacial
+xy.moran <- SDMworkshop::testSpatialCorrelation(
+  xy = xy.thin,
+  variables = variables$brick
 )
 xy.moran
+
+
 #NOTA: aquí no hay un criterio fijo, realmente no se puede eliminar completamente la autocorrelación espacial, mitigarla ya es suficiente.
-
-
 rm(xy, xy.moran, xy.thin, tilia)
 
 
@@ -338,7 +327,6 @@ rm(xy, xy.moran, xy.thin, tilia)
 #PREPARACION DE DATOS PARA AJUSTAR LOS MODELOS
 ################################################################
 ################################################################
-
 
 #PRESENCIA
 ######################################
