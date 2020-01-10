@@ -12,10 +12,12 @@ library(magrittr)
 library(leaflet)
 library(dplyr)
 library(raster)
-library(SDMworkshop)
 library(here)
 source("funciones.R")
 here::here()
+library(devtools)
+devtools::install_github("blasbenito/SDMworkshop", force = TRUE)
+library(SDMworkshop)
 
 
 # 2 PREPARACIÓN DE LAS PRESENCIAS -------------------------------------------
@@ -321,236 +323,42 @@ xy.moran
 rm(xy, xy.moran, xy.thin, tilia)
 
 
+# * 2.4 Preparación de datos de entrenamiento ----------------------------------
 
-################################################################
-################################################################
-#PREPARACION DE DATOS PARA AJUSTAR LOS MODELOS
-################################################################
-################################################################
+#usaremos la función "prepareTrainingData"
+help(prepareTrainingData)
 
-#PRESENCIA
-######################################
-######################################
-
-#valores de las variables para sp$xy
-sp$presencia <- data.frame(
-  sp$xy,
-  raster::extract(
-    x = variables$brick,
-    y = sp$xy,
-    df = TRUE,
-    cellnumbers = FALSE
-  )
-)
-sp$presencia$ID <- NULL
-
-#añadimos columna de presencia (presencia = 1)
-sp$presencia$presencia <- 1
-
-
-#BACKGROUND
-###################################
-###################################
-#la función dismo::randomPoints es muy útil para generar puntos de background
-#el número de puntos de background debe ser suficiente para asegurarnos que estamos muestreando variables$brik bien
-#en este caso muestreamos un 2% del total de las celdas de las variables, pero luego nos aseguramos de tener los máximos y mínimos de todas las variables
-background <- data.frame(
-  dismo::randomPoints(
-    mask = variables$brick,
-    n = floor(
-      (2 * nrow(variables$df)) / 100
-    )
-  )
-)
-
-#buscamos los casos que contienen los extremos de cada una de las variables
-########################################################################
-#iteramos por cada variable
-for(variable in names(variables$df)){
-
-  #buscamos las coordenadas de la celda con el menor valor
-  xy.min <- raster::xyFromCell(object = variables$brick,
-                               cell = raster::which.min(variables$brick[[variable]])[1]
-  )
-  #buscamos las coordenadas de la celda con el mayor valor
-  xy.max <- raster::xyFromCell(object = variables$brick,
-                               cell = raster::which.max(variables$brick[[variable]])[1]
-  )
-
-  #las unimos al background
-  background <- rbind(background, xy.min, xy.max)
-}
-
-#eliminamos duplicados
-background <- background[!duplicated(background), ]
-
-#vemos el background
-plotPresencia(
-  brick = variables$brick,
-  variable = "human_footprint",
-  lon = background$x,
-  lat = background$y
-)
-
-#le añadimos los valores de las variables
-sp$background <- data.frame(
-  background,
-  raster::extract(
-    x = variables$brick,
-    y = background,
-    df = TRUE,
-    cellnumbers = FALSE
-  )
-)
-sp$background$ID <- NULL
-
-#añadimos columna de presencia (presencia = 1)
-sp$background$presencia <- 0
-
-rm(background, xy.max, xy.min, variable)
-
-
-
-#BACKGROUND RESTRINGIDO
-#############################
-#background limitado a las zonas a las que la especie puede acceder mediante migración
-background.restringido <- backgroundRestringido(
+#presencia
+sp$presencia <- SDMworkshop::prepareTrainingData(
   xy = sp$xy,
-  brick = variables$brick,
-  buffer.km = 200, #máxima distancia migratoria
-  percent = 2 #porcentaje de área muestreada
+  variables = variables$brick,
+  presence.only = TRUE
 )
 
-#vemos el background
-plotPresencia(
-  brick = variables$brick,
-  variable = "human_footprint",
-  lon = background.restringido$x,
-  lat = background.restringido$y
-)
-
-#le añadimos los valores de las variables
-sp$background.restringido <- data.frame(
-  background.restringido,
-  raster::extract(
-    x = variables$brick,
-    y = background.restringido,
-    df = TRUE,
-    cellnumbers = FALSE
-  )
-)
-sp$background.restringido$ID <- NULL
-
-#añadimos columna de presencia (presencia = 1)
-sp$background.restringido$presencia <- 0
-
-rm(background.restringido)
-
-
-
-#PSEUDOAUSENCIAS
-##############################
-#usamos sp$xy en lugar de sp$xy porque sp$xy tiene todas las presencias posibles.
-#sin embargo, queremos el doble de pseudo-ausencias como presencias hay en sp$xy, de ahí n=nrow(sp$xy)
-pseudoausencia <- data.frame(
-  randomPoints(
-    mask = variables$brick,
-    n = nrow(sp$xy) * 2, #doble del número de presencias
-    p = sp$xy, #puntos a excluir
-    excludep = TRUE #excluir p
-  )
-)
-
-#buscamos los casos que contienen los extremos de cada una de las variables
-########################################################################
-#iteramos por cada variable
-for(variable in names(variables$df)){
-
-  #buscamos las coordenadas de la celda con el menor valor
-  xy.min <- raster::xyFromCell(object = variables$brick,
-                               cell = raster::which.min(variables$brick[[variable]])[1]
-  )
-  #buscamos las coordenadas de la celda con el mayor valor
-  xy.max <- raster::xyFromCell(object = variables$brick,
-                               cell = raster::which.max(variables$brick[[variable]])[1]
-  )
-
-  #las unimos al background
-  pseudoausencia <- rbind(pseudoausencia, xy.min, xy.max)
-}
-
-#eliminamos duplicados
-pseudoausencia <- pseudoausencia[!duplicated(pseudoausencia), ]
-
-#vemos las pseudoausencias
-plotPresencia(
-  brick = variables$brick,
-  variable = "human_footprint",
-  lon = pseudoausencia$x,
-  lat = pseudoausencia$y
-)
-
-
-#le añadimos los valores de las variables
-sp$pseudoausencia <- data.frame(
-  pseudoausencia,
-  raster::extract(
-    x = variables$brick,
-    y = pseudoausencia,
-    df = TRUE,
-    cellnumbers = FALSE
-  )
-)
-sp$pseudoausencia$ID <- NULL
-
-#añadimos columna de presencia (presencia = 1)
-sp$pseudoausencia$presencia <- 0
-
-rm(pseudoausencia, xy.min, xy.max, variable)
-
-
-
-#GENERAMOS LAS AUSENCIAS
-########################
-#NO TENEMOS AUSENCIAS REALES (EN GBIF NO SUELE HABERLAS), PERO VAMOS A SIMULAR UN CONJUNTO DE AUSENCIAS, COMO SI HUBIÉRAMOS REALIZADO MUESTREOS ALREDEDOR DE LAS ZONAS DE PRESENCIA
-ausencia <- simulaAusencia(
+#background
+sp$background <- SDMworkshop::prepareTrainingData(
   xy = sp$xy,
-  brick = variables$brick,
-  pob.muestreadas = 60, #porcentaje de poblaciones muestreadas
-  buffer.km = 100, #distancia máxima desde poblaciones muestreadas
-  distancia.thinning = 4 #separación de las ausencias en número de celdas
+  variables = variables$brick,
+  n = 10000,
+  background = TRUE
 )
 
-#vemos las ausencias con las presencias
-plotPresencia(
-  brick = variables$brick,
-  variable = "human_footprint",
-  lon = c(sp$xy$x, ausencia$x),
-  lat = c(sp$xy$y, ausencia$y),
-  group = c(
-    rep("presencia", nrow(sp$xy)),
-    rep("ausencia", nrow(ausencia))
-  )
+#background restringido a zonas accesibles mediante migracción
+sp$background.restringido <- SDMworkshop::prepareTrainingData(
+  xy = sp$xy,
+  variables = variables$brick,
+  n = 10000,
+  restricted.background = TRUE,
+  restricted.background.buffer = 300
 )
 
-#le añadimos los valores de las variables
-sp$ausencia <- data.frame(
-  ausencia,
-  raster::extract(
-    x = variables$brick,
-    y = ausencia,
-    df = TRUE,
-    cellnumbers = FALSE
-  )
+#pseudoausencias
+sp$pseudoausencia <- SDMworkshop::prepareTrainingData(
+  xy = sp$xy,
+  variables = variables$brick,
+  n = nrow(sp$presencia) * 2,
+  background = TRUE
 )
-sp$ausencia$ID <- NULL
-
-#lo añadimos a sp
-sp$ausencia$presencia <- 0
-
-rm(ausencia)
-
-
 
 
 ##################################################################
