@@ -360,59 +360,76 @@ sp$pseudoausencia <- SDMworkshop::prepareTrainingData(
   background = TRUE
 )
 
+# 3 SELECCIÓN DE VARIABLES ---------------------------------------
 
-##################################################################
-##################################################################
-#SELECCION DE VARIABLES
-##################################################################
-##################################################################
-#Las variables a seleccionar deben:
-#deben tener algún vínculo causal con la distribución de la especie
-#no estar correlacionadas entre sí (baja colinealidad)
 
-#NOTA: de ahora en adelante asumimos que no sabemos cuales son las variables importantes para la especie virtual!!
-
-#1. CURVAS DE USO VS DISPONIBILIDAD
-###################################################
-sp$variables.uso.disponibilidad <- plotUsoDisponibilidad(
-  presencias = rbind(sp$presencia, sp$background),
-  presencia = "presencia",
-  variables = names(variables$brick)
+# 3.1 Curvas de uso-disponibilidad -------------------------------
+#en este plot vemos:
+#uso: densidad de las presencias sobre las variables
+#disponibilidad: densidad del background sobre las variables
+#cuanto más separadas están ambas distribuciones, más fácil es usar la variable para ajustar modelos de distribución!
+sp$variables.uso.disponibilidad <- SDMworkshop::plotUseAvailability(
+  x = sp$background ,
+  presence.column = "presence", 
+  variables = NULL, 
+  exclude.variables = c("x", "y"), 
+  plot = TRUE
 )
 
+#Las variables a seleccionar deben:
+#tener algún vínculo causal con la distribución de la especie
+#mostrar una separación entre la distribución de uso y la de disponibilidad
+#no estar correlacionadas entre sí (baja colinealidad)
+#no ser unas combinaciones lineales de las otras (A ~ B + C)
 
-#2. POINT BISERIAL CORRELATION
-###################################################
-#BISERIAL CORRELATION es la correlación entre una variable binaria (presencia con sus unos y ceros) y una variable contínua (cualquiera de las variables)
+
+# 3.2 Point biserial correlation ----------------------------------
+#es la correlación entre una variable binaria (presencia con sus unos y ceros) y una variable contínua (cualquiera de las variables)
 #Pendientes positivas o negativas indican que las medias de las presencias y las ausencias son distintas para una variable dada
 #guardamos el resultado directamente en la especie virtual
-sp$variables.biserial.correlation <- SDMworkshop::corPB(
-  x = rbind(sp$presencia, sp$background),
-  presence.column = "presencia",
-  variables = names(variables$brick)
+sp$variables.biserial.correlation <- SDMworkshop::biserialCorrelation(
+  x = sp$background,
+  presence.column = "presence",
+  exclude.variables = c("x", "y")
 )
 #la función devuelve el plot y un dataframe
 #sp$biserial.correlation$plot
 #sp$biserial.correlation$df
+sp$variables.biserial.correlation$df
 
 
-#3. DENDROGRAMA DE CORRELACIÓN
-###################################################
-correlacion.variables <- dendrogramaCorrelacion(
-  variables.df = variables$df,
-  biserial.correlation = sp$variables.biserial.correlation$df,
-  seleccion.automatica = TRUE,
-  correlacion.maxima = 0.50
+# 3.3 Dendrograma de correlación ---------------------------------
+#veamos los grupos de variables correlacionados entre sí
+x <- SDMworkshop::correlationDendrogram(
+  x = sp$background,
+  exclude.variables = c("x", "y", "presence"),
+  automatic.selection = FALSE
 )
 
-#si seleccion.automatica = TRUE, devuelve una lista con dos slots
-correlacion.variables$variables.dendrograma
-correlacion.variables$variables.seleccionas
+#ahora, usemos el resultado de biserialCorrelation como criterio
+x <- SDMworkshop::correlationDendrogram(
+  x = sp$background,
+  exclude.variables = c("x", "y", "presence"),
+  correlation.threshold = 0.5,
+  automatic.selection = TRUE,
+  biserialCorrelation.output = sp$variables.biserial.correlation
+)
+#si seleccion.automatica = TRUE, necesita biserialCorrelation.output, y devuelve una lista con dos slots
+x$dendrogram
+x$selected.variables
 #si seleccion.automatica = FALSE, devuelve solo el plot
 
-#IMPORTANTE: la selección automática no es perfecta!
-#es necesario evaluar críticamente cada elección del algoritmo.
-#POR EJEMPLO: entre bio4 y bio7, la primera está seleccionada automáticamente, pero la segunda presenta mejores propiedades cuando miramos las curvas de uso-disponibilidad.
+#y si repetimos el dendrograma con las variables seleccionadas?
+x <- SDMworkshop::correlationDendrogram(
+  x = sp$background,
+  variables = x$selected.variables,
+  correlation.threshold = 0.5,
+  automatic.selection = TRUE,
+  biserialCorrelation.output = sp$variables.biserial.correlation
+)
+
+# VOY POR AQUÍ!!! ------------------------------------------
+#######################################################3
 
 #guardamos el dendrograma en la especie virtual
 sp$variables.dendrograma <- correlacion.variables$variables.dendrograma
